@@ -1,14 +1,12 @@
-from .clip_token_counter import DivergentCLIPTokenCounter
-from .deepseek_vl2_node import DeepSeekVL2Node
+from .dolphin_vision_node import DolphinVision
+from .clip_token_counter import CLIPTokenCounter
 
 NODE_CLASS_MAPPINGS = {
-    "CLIP Token Counter": DivergentCLIPTokenCounter,
-    "DeepSeekVL2Node": DeepSeekVL2Node,
+    "DolphinVision": DolphinVision,
+    "CLIPTokenCounter": CLIPTokenCounter
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "CLIP Token Counter": "Divergent CLIP Token Counter",
-    "DeepSeekVL2Node": "DeepSeek VL2 Node",
+    "DolphinVision": "DolphinVision",
+    "CLIPTokenCounter": "CLIP Token Counter"
 }
-
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']

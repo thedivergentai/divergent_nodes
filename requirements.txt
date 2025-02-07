@@ -1,7 +1,4 @@
-transformers>=4.26.0
-torch>=1.13.0
-deepseek-vl
+transformers
+torch
 Pillow
-requests
-tqdm
-bitsandbytes
+accelerate
