@@ -1,67 +1,105 @@
-# Divergent Nodes - Custom Nodes for ComfyUI
+# 👽 Divergent Nodes for ComfyUI 
 
-This repository contains a collection of custom nodes for ComfyUI, designed to enhance your workflows with new functionalities. Currently, it includes nodes for:
+**✨ Enhance your ComfyUI workflows with Divergent Nodes – a growing collection of custom nodes designed to expand your creative possibilities!**
 
-- **Divergent CLIP Token Counter**:  Counts CLIP tokens in text input.
-- **DeepSeek VL2 Node**: Runs the DeepSeek VL2 model for visual language tasks.
+This repository offers a curated set of custom nodes that introduce new functionalities and streamline your ComfyUI experience, making it even more powerful and versatile. 
 
-Each node is designed to be modular and easy to integrate into your existing ComfyUI setups. Refer to the individual node sections below for detailed usage instructions.
+**Nodes Currently Included:**
 
-## Installation
+*   **✨ Divergent CLIP Token Counter**:  Precisely count CLIP tokens in your text prompts, ensuring you stay within token limits.
+*   **👁️ DeepSeek VL2 Node**:  Unleash the potential of the DeepSeek VL2 model for advanced visual language understanding and generation tasks.
 
-1. Clone or download this repository into your `custom_nodes` directory
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-3. Restart ComfyUI
+---
 
-## Node: Divergent CLIP Token Counter
+## 🛠️ Installation Guide
 
-### Description
-Counts the number of CLIP tokens in a given text string using the CLIP tokenizer.
+Getting started with Divergent Nodes is straightforward. Follow these simple steps to integrate them into your ComfyUI setup:
 
-### Inputs
-- **text**: Input text string to tokenize
+1.  **Clone the Repository:**
 
-### Outputs  
-- **token_count**: Number of CLIP tokens in the input text
+    Open your ComfyUI `custom_nodes` directory and clone the Divergent Nodes repository:
 
-### Usage
-1. Add the "Divergent CLIP Token Counter" node to your workflow
-2. Connect a text input to the node
-3. The node will output the token count which can be used in your workflow
+    ```bash
+    git clone https://github.com/your-github-username/divergent_nodes.git custom_nodes/divergent_nodes
+    ```
+    Alternatively, you can download the repository as a ZIP file and extract its contents into the `custom_nodes` directory.
 
-### Notes
-- Empty strings will return 0 tokens
-- The node handles special characters and multilingual text
-- Maximum token length is limited by CLIP's tokenizer (77 tokens)
+2.  **Install Dependencies:**
 
-## Node: DeepSeek VL2 Node
+    Navigate into the `divergent_nodes` directory within `custom_nodes` and install the required Python packages using pip:
 
-### Description
-A ComfyUI custom node for running the DeepSeek VL2 model for visual language tasks.
+    ```bash
+    cd custom_nodes/divergent_nodes
+    pip install -r requirements.txt
+    ```
 
-### Inputs
-- **prompt**: Input text prompt for the model.
-- **quantization**: Quantization method for the model (bf16, nf4).
-- **model_variant**: Variant of the DeepSeek VL2 model (base, small, tiny).
-- **image**: Optional input image for visual language tasks.
+3.  **Restart ComfyUI:**
 
-### Outputs
-- **output**: Text output from the DeepSeek VL2 model.
+    To ensure ComfyUI recognizes and loads the newly installed Divergent Nodes, restart the ComfyUI application.
 
-### Usage
-1. Add the "DeepSeek VL2 Node" to your workflow.
-2. Connect a text prompt to the "prompt" input.
-3. Select the desired quantization and model variant.
-4. Optionally connect an image to the "image" input for visual tasks.
-5. The node will output the text response from the DeepSeek VL2 model.
+---
 
-### Notes
-- Requires significant VRAM, especially for the base model and bf16 quantization.
-- Supports both text-only and visual-language tasks.
-- Model variants allow for trade-offs between performance and resource usage.
+## 🧰 Node Details: Divergent CLIP Token Counter
 
-## License
-MIT License
+**Description:**
+
+The **Divergent CLIP Token Counter** node provides a utility to accurately count the number of CLIP tokens in a given text string. This is invaluable for workflows where managing token counts is crucial, such as when working with language models that have token limits. By using the CLIP tokenizer, this node ensures precise token counting, mirroring how CLIP models process text.
+
+**Inputs:**
+
+*   **`text` (STRING, Multiline)**:  The text string you want to analyze and count tokens for. Supports multiline input for convenience.
+
+**Outputs:**
+
+*   **`token_count` (INT)**:  The total number of CLIP tokens identified in the input text.
+
+**Usage Tips:**
+
+1.  In your ComfyUI workflow, add the "Divergent CLIP Token Counter" node.
+2.  Connect a text-providing node (e.g., a `TextArea` or `Load Text File` node) to the `text` input of the **Divergent CLIP Token Counter**.
+3.  The node will automatically process the text and output the `token_count`. You can then use this count for various purposes within your workflow, such as displaying it or using it in conditional logic.
+
+**💡 Key Features:**
+
+*   **Zero Token Handling**:  Correctly returns `0` tokens when an empty string is provided as input.
+*   **Robust Text Processing**:  Accurately handles special characters and multilingual text, ensuring reliable token counts across diverse text inputs.
+*   **CLIP Standard Compliance**:  Utilizes the CLIP tokenizer to provide token counts that are consistent with CLIP model expectations, respecting the 77-token limit of CLIP's context window.
+
+---
+
+## 👁️ Node Details: DeepSeek VL2 Node
+
+**Description:**
+
+The **DeepSeek VL2 Node** integrates the powerful DeepSeek VL2 visual language model directly into ComfyUI. This node allows you to perform a wide range of visual language tasks, including generating detailed descriptions of images, engaging in visual question answering, and more. DeepSeek VL2 is known for its strong performance in understanding and generating language related to visual content, making this node a valuable addition for advanced ComfyUI workflows.
+
+**Inputs:**
+
+*   **`prompt` (STRING, Multiline)**:  The text prompt that guides the DeepSeek VL2 model's behavior. You can use this to specify the task or provide context for image analysis or generation.  *(Default: "Describe the image in detail.")*
+*   **`quantization` (DROPDOWN: `bf16`, `nf4`)**:  Select the quantization method to optimize the model's performance and memory footprint. `bf16` (BFloat16) offers a balance of speed and precision, while `nf4` (NF4) provides further memory savings, potentially at a slight performance trade-off. *(Default: `bf16`)*
+*   **`model_variant` (DROPDOWN: `base`, `small`, `tiny`)**: Choose the variant of the DeepSeek VL2 model to use. `base` is the most capable but requires the most resources, while `small` and `tiny` offer progressively reduced resource usage with some performance scaling. *(Default: `base`)*
+*   **`image` (IMAGE, Optional)**:  The input image for visual language tasks. This is optional, allowing you to use the node for text-only generation tasks as well.
+
+**Outputs:**
+
+*   **`output` (STRING)**:  The textual response generated by the DeepSeek VL2 model. This could be an image description, an answer to a visual question, or text generated based on a text prompt alone.
+
+**Usage Tips:**
+
+1.  Add the "DeepSeek VL2 Node" to your ComfyUI workflow.
+2.  Connect a text prompt to the `prompt` input to guide the model.
+3.  Configure the `quantization` and `model_variant` settings based on your system's hardware capabilities and desired performance level. For users with less VRAM, consider using the `tiny` or `small` variants and `nf4` quantization.
+4.  *(Optional)* For visual language tasks, connect an image input (e.g., from a `Load Image` node) to the `image` input.
+5.  Run your workflow. The **DeepSeek VL2 Node** will process the inputs and output the generated text in the `output` field.
+
+**⚠️ Important Notes:**
+
+*   **VRAM Consumption**:  The DeepSeek VL2 model, especially the `base` variant with `bf16` quantization, is VRAM-intensive. Ensure your GPU has sufficient VRAM, particularly when using higher-resource configurations. Consider the `small` or `tiny` model variants and `nf4` quantization to reduce VRAM usage if needed.
+*   **Versatility**:  This node is versatile and supports both text-only and visual-language tasks. You can use it for pure text generation by omitting the `image` input, or leverage its visual understanding capabilities by providing an image.
+*   **Model Variant Selection**:  The `tiny`, `small`, and `base` model variants offer a trade-off between performance and computational resources. Experiment with different variants to find the best balance for your specific use case and hardware.
+
+---
+
+## 📜 License
+
+Divergent Nodes for ComfyUI is released under the [MIT License](LICENSE).  See the `LICENSE` file for full details.
