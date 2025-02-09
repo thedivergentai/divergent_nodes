@@ -1,10 +1,8 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPImageProcessor
-from transformers.errors import PreTrainedModelNotFoundError
 from PIL import Image
 from comfy.sd import CLIP
 from torchvision.transforms import ToPILImage
-from .utils.quantization_utils import quantize_model, unload_model, _apply_bitsandbytes_quantization
 import hashlib
 from typing import Tuple, Dict, Any
 
@@ -35,23 +33,8 @@ class DolphinVisionNode:
                 "prompt": ("STRING", {"multiline": True}),
             },
             "optional": {
-                "cache": ("BOOLEAN", {"default": False}),
-                "quantization_type": (
-                    [
-                        "bf16 (No Quantization, Highest Quality)",
-                        "nf4 (Fastest, Most Efficient, Lowest Quality)",
-                        "fp4 (Fast, Very Efficient, Low Quality)",
-                        "int8 (Medium Speed, Efficient, Medium Quality)",
-                    ],
-                    {"default": "bf16 (No Quantization, Highest Quality)"}
-                ),
             }
         }
-        # The 'cache' parameter controls whether the quantized model is cached in memory.
-        # If True, the quantized model is stored in a global cache to avoid reloading it
-        # for subsequent calls with the same quantization settings.
-        # This can significantly speed up the process if you are using the same
-        # quantization settings repeatedly.
 
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("answer",)
@@ -69,70 +52,32 @@ class DolphinVisionNode:
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model = None
         self.tokenizer = None
-        self.quantized = False  # Flag
 
-    def load_model(self, quantization_type="bf16 (No Quantization, Highest Quality)", cache=False):
+    def load_model(self):
         """
-        Loads the DolphinVision model and applies the specified quantization.
-
-        Args:
-            quantization_type (str): The type of quantization to apply.  Options are:
-                - "bf16 (No Quantization, Highest Quality)"
-                - "nf4 (Fastest, Most Efficient, Lowest Quality)"
-                - "fp4 (Fast, Very Efficient, Low Quality)"
-                - "int8 (Medium Speed, Efficient, Medium Quality)"
-            cache (bool): Whether to cache the quantized model.
-
-        Returns:
-            Tuple[str] or None: Returns a tuple containing an error message string if an error occurs,
-            otherwise returns None.
+        Loads the DolphinVision model in bf16 mode.
         """
         try:
-            quantization_map = {
-                "bf16 (No Quantization, Highest Quality)": ("bf16", None),
-                "nf4 (Fastest, Most Efficient, Lowest Quality)": ("bitsandbytes", 4),
-                "fp4 (Fast, Very Efficient, Low Quality)": ("bitsandbytes", 4),
-                "int8 (Medium Speed, Efficient, Medium Quality)": ("bitsandbytes", 8),
-            }
-            quant_method, bits = quantization_map.get(quantization_type, (None, None))
-
-            if quant_method == "bf16":
-                try:
-                    self.model = AutoModelForCausalLM.from_pretrained(
-                        self.model_name,
-                        torch_dtype=torch.bfloat16,
-                        device_map="auto",
-                        trust_remote_code=True
-                    )
-                    self.quantized = False
-                except (PreTrainedModelNotFoundError, OSError) as e:
-                    return (f"Error loading model '{self.model_name}'. It might not exist or there was an OSError: {e}",)
-            elif quant_method == "bitsandbytes":
-                self.model = quantize_model(
-                    self.model_name,
-                    quantization_method="bitsandbytes",
-                    device=self.device,
-                    cache=cache,
-                    bits=bits
-                )
-                self.quantized = True
-            else:
-                return ("Invalid quantization type.",)
-            if self.model is None:
-                return ("Failed to load model.",)
-
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_name,
-                    trust_remote_code=True
-                )
-            except Exception as e:
-                return (f"Error loading tokenizer: {e}",)
-
-            self.model.eval()
-
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=torch.bfloat16,
+                device_map=self.device,
+                trust_remote_code=True
+            )
+        except OSError as e:
+            return (f"Error loading model '{self.model_name}'. It might not exist or there was an OSError: {e}",)
         except Exception as e:
-            return (f"An unexpected error occurred while loading the model: {e}",)
+            return (f"Error loading model '{self.model_name}': {e}",)
+
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=True
+            )
+        except Exception as e:
+            return (f"Error loading tokenizer: {e}",)
+
+        self.model.eval()
 
 
     def generate_answer(self, image, prompt, **kwargs):
@@ -142,15 +87,13 @@ class DolphinVisionNode:
         Args:
             image (torch.Tensor): The input image tensor.  Should have shape (C, H, W) where C is 1 or 3.
             prompt (str): The text prompt to guide the description.
-            **kwargs: Additional keyword arguments, including:
-                - quantization_type (str, optional):  The quantization type to use.
-                - cache (bool, optional): Whether to cache the quantized model.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             Tuple[str]: A tuple containing the generated text description (string).  Returns
             an error message if an error occurs.
         """
-        self.load_model(quantization_type=kwargs.get("quantization_type", "bf16 (No Quantization, Highest Quality)"), cache=kwargs.get("cache", False))
+        self.load_model()
         if self.model is None or self.tokenizer is None:
             return ("Model not loaded. Please check the node's configuration and ensure the model is loaded successfully.",)
 
@@ -210,36 +153,7 @@ class DolphinVisionNode:
                     return (f"Error during model generation: {e}",)
 
             answer = self.tokenizer.decode(output_ids[input_ids.shape[1]:], skip_special_tokens=True).strip()
-            if not self.cache:
-                unload_model(self.model)
-                self.quantized = False
             return (answer,)
 
         except Exception as e:
             return (f"An unexpected error occurred: {e}",)
-    
-    @classmethod
-    def IS_CHANGED(cls, image, prompt, **kwargs):
-        """
-        Detects if the inputs have changed. This method is used by ComfyUI to determine
-        whether to re-execute the node.
-
-        Args:
-            image (torch.Tensor): The input image tensor.
-            prompt (str): The text prompt.
-            **kwargs: Additional keyword arguments (quantization_type, cache).
-
-        Returns:
-            str: A hash of the inputs (image and prompt).  Returns 0 if either image or prompt is None.
-        """
-
-        if image is None or prompt is None:
-            return 0
-        return hash((image.tobytes(), prompt))
-
-    def unload(self):
-        """
-        Unloads the model from memory.
-        """
-        if self.model:
-            unload_model(self.model)

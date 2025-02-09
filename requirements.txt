@@ -4,4 +4,3 @@ requests
 tqdm
 gitpython
 huggingface_hub
-bitsandbytes
