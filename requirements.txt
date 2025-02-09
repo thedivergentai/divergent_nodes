@@ -1,4 +1,7 @@
 transformers
-torch
-Pillow
-accelerate
+pillow
+requests
+tqdm
+gitpython
+huggingface_hub
+bitsandbytes
