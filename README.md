@@ -53,8 +53,7 @@ This repository offers a curated set of custom nodes that introduce new function
 
 **Model Loading:**
 
-*   `load_model(quantization_type="bf16 (No Quantization, Highest Quality)", cache=False)`: Loads the model.
-    *   `quantization_type`: Specifies the quantization method ("bf16" is the default).
+*   `load_model(cache=False)`: Loads the model.
     *   `cache`: Uses a cached version if available.
 *   `IS_CHANGED(image, prompt, **kwargs)`: Optimizes performance by checking for input changes.
 *   `unload()`: Unloads the model from memory.
@@ -72,7 +71,6 @@ See the [Troubleshooting/FAQ](https://github.com/thedivergentai/divergent_nodes/
 ## 🚀 Future Development
 
 *   Additional Nodes
-*   Improved Quantization Options
 *   User Interface Enhancements
 *   Community Contributions (see the [Contributing](https://github.com/thedivergentai/divergent_nodes/wiki/Contributing) page on the Wiki)
 
