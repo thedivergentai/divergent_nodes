@@ -15,21 +15,23 @@ This repository offers a curated set of custom nodes that introduce new function
 
 ## 🛠️ Installation Guide
 
-1.  **Clone the Repository:**
+1.  **Navigate to your ComfyUI installation's `custom_nodes` directory.** This directory is located within your ComfyUI installation folder.
+
+2.  **Clone the Repository:**
 
     ```bash
-    git clone https://github.com/thedivergentai/divergent_nodes.git custom_nodes/divergent_nodes
+    git clone https://github.com/thedivergentai/divergent_nodes.git
     ```
-   (Or download as a ZIP and extract to `custom_nodes`.)
+   (Or download as a ZIP and extract to the `custom_nodes` directory.)
 
-2.  **Install Dependencies:**
+3.  **Install Dependencies:**
 
     ```bash
-    cd custom_nodes/divergent_nodes
+    cd divergent_nodes
     pip install -r requirements.txt
     ```
 
-3.  **Restart ComfyUI:** Restart to load the new nodes.
+4.  **Restart ComfyUI:** Restart to load the new nodes.
 
 ---
 
