@@ -4,7 +4,7 @@ NODE_MEMORY_STACKS = {} # Class-level dictionary to store memory stacks
 
 class DataStoreNode:
     NODE_DISPLAY_NAME = "Data Store"
-    RETURN_TYPES = ()
+    RETURN_TYPES = ("STACK",)
     CATEGORY = "Divergent Nodes 👽/Data Storage"
 
     @classmethod
@@ -48,4 +48,4 @@ class DataStoreNode:
                 f.write(repr(item)) # Store data as string
 
 
-        return () # No output for now
+        return (current_stack,) # Return the stack
