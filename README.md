@@ -10,6 +10,7 @@ This repository offers a curated set of custom nodes that introduce new function
 
 *   **✨ Divergent CLIP Token Counter**: Precisely count CLIP tokens in your text prompts.
 *   **✨ UTF8 Encoder**: Ensures text is encoded in UTF-8 format to prevent workflow errors.
+*   **💾 Data Store**: Stores any type of data locally within a specified directory, using a memory stack system.
 
 ---
 
@@ -55,6 +56,21 @@ This repository offers a curated set of custom nodes that introduce new function
 
 **Key Features:** Handles potential decoding issues, ensures consistent text encoding.
 
+### 💾 Data Store
+
+**Description:** Stores any type of data locally within a specified directory, using a memory stack system.
+
+**Inputs:**
+
+*   `data` (*): Any type of data to be stored.
+*   `directory` (STRING): The directory to store the data in. Defaults to "store" in the repository root.
+*   `memory_stack_size` (INT): The number of memory stacks to use. Minimum is 1.
+
+**Outputs:**
+
+*   None
+
+**Key Features:** Stores any data type, uses a memory stack system, and saves data to text files.
 
 ---
 
