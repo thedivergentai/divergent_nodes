@@ -18,7 +18,3 @@ class UTF8EncoderNode:
         """
         encoded_text = text.encode('utf-8').decode('utf-8', 'ignore')
         return (encoded_text,)
-
-NODE_CLASS_MAPPINGS = {
-    "UTF8EncoderNode": UTF8EncoderNode
-}

@@ -1,6 +1,1 @@
 transformers
-pillow
-requests
-tqdm
-gitpython
-huggingface_hub

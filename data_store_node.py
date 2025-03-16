@@ -42,12 +42,7 @@ class DataStoreNode:
         for i, item in enumerate(current_stack):
             file_path = os.path.join(output_dir, f"stack_{i+1}.txt")
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(str(item)) # Store data as string
+                f.write(repr(item)) # Store data as string
 
 
         return () # No output for now
-
-
-NODE_CLASS_MAPPINGS = {
-    "DataStoreNode": DataStoreNode
-}
