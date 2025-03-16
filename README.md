@@ -9,7 +9,7 @@ This repository offers a curated set of custom nodes that introduce new function
 **Nodes Currently Included:**
 
 *   **✨ Divergent CLIP Token Counter**: Precisely count CLIP tokens in your text prompts.
-*   **🐬 DolphinVision Node**: Generate text descriptions of images using the DolphinVision 7b multimodal model.
+*   **✨ UTF8 Encoder**: Ensures text is encoded in UTF-8 format to prevent workflow errors.
 
 ---
 
@@ -44,21 +44,15 @@ This repository offers a curated set of custom nodes that introduce new function
 
 **Key Features:** Zero token handling, robust text processing, CLIP standard compliance.
 
-### 🐬 DolphinVision Node
+### ✨ UTF8 Encoder
 
-**Description:** Generate text descriptions of images using the [DolphinVision 7b](https://huggingface.co/cognitivecomputations/dolphin-2_6-phi-2) model (hosted on Hugging Face).
+**Description:** Ensures text is encoded in UTF-8 format to prevent workflow errors caused by incorrect character encoding.
 
-**Inputs:** `image` (IMAGE TENSOR), `prompt` (STRING)
+**Inputs:** `text` (STRING)
 **Outputs:** `text` (STRING)
 
-**Model Loading:**
+**Key Features:** Handles potential decoding issues, ensures consistent text encoding.
 
-*   `load_model(cache=False)`: Loads the model.
-    *   `cache`: Uses a cached version if available.
-*   `IS_CHANGED(image, prompt, **kwargs)`: Optimizes performance by checking for input changes.
-*   `unload()`: Unloads the model from memory.
-
-**Key Features:** Multimodal generation, flexible prompting, automatic model download.
 
 ---
 

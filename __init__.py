@@ -1,12 +1,12 @@
 from .clip_token_counter import CLIPTokenCounter
-from .dolphin_vision_node import DolphinVisionNode
+from .utf8_encoder_node import UTF8EncoderNode
 
 NODE_CLASS_MAPPINGS = {
     "CLIPTokenCounter": CLIPTokenCounter,
-    "DolphinVisionNode": DolphinVisionNode
+    "UTF8EncoderNode": UTF8EncoderNode
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CLIPTokenCounter": "CLIP Token Counter",
-    "DolphinVisionNode": "Dolphin Vision"
+    "UTF8EncoderNode": "UTF8 Encoder"
 }
