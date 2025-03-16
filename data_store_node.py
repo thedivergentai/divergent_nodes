@@ -5,14 +5,17 @@ NODE_MEMORY_STACKS = {} # Class-level dictionary to store memory stacks
 class DataStoreNode:
     NODE_DISPLAY_NAME = "Data Store"
     RETURN_TYPES = ()
-    INPUT_TYPES = {
-        "required": {
-            "data": ("*",),
-            "directory": ("STRING", {"default": "store"}),
-            "memory_stack_size": ("INT", {"default": 1, "min": 1}),
-        }
-    }
     CATEGORY = "Divergent Nodes 👽/Data Storage"
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "data": ("*",),
+                "directory": ("STRING", {"default": "store"}),
+                "memory_stack_size": ("INT", {"default": 1, "min": 1}),
+            }
+        }
 
     def __init__(self):
         self.stack = [] # Instance-level stack (not used for persistent memory across executions)

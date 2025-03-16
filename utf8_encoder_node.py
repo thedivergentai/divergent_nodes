@@ -1,10 +1,15 @@
 class UTF8EncoderNode:
     NODE_DISPLAY_NAME = "UTF8 Encoder"
     RETURN_TYPES = ("STRING",)
-    INPUT_TYPES = {
-        "text": ("STRING",),
-    }
     CATEGORY = "Divergent Nodes 👽/Text"
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "text": ("STRING",),
+            }
+        }
 
     def encode_utf8(self, text):
         """
