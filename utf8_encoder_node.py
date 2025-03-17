@@ -7,7 +7,7 @@ class UTF8EncoderNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "text": ("STRING",),
+                "text": ("STRING", {"defaultInput": True}),
             }
         }
 
