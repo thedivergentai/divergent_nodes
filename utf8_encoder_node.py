@@ -11,6 +11,8 @@ class UTF8EncoderNode:
             }
         }
 
+    FUNCTION = "encode_utf8"
+
     def encode_utf8(self, text):
         """
         Encodes the input text to UTF-8 format.
