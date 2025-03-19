@@ -23,5 +23,5 @@ class UTF8EncoderNode:
         Returns:
             tuple: A tuple containing the UTF-8 encoded text (str).
         """
-        encoded_text = text.encode('utf-8').decode('utf-8', 'ignore')
+        encoded_text = text.encode('utf-8').decode('utf-8', 'replace')
         return (encoded_text,)
