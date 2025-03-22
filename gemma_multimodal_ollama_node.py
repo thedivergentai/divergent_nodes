@@ -23,7 +23,7 @@ class GemmaMultimodalOllama:
         return {
             "required": {
                 "ollama_base_url": ("STRING", {"default": "http://localhost:11434"}),  # Ollama API base URL
-                "model_name": ("STRING", {"default": "gemma-3-27b-it-abliterated-IQ2_S.gguf"}),  # Name of the model in Ollama
+                "model_name": ("STRING", {"default": "hf.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF:IQ2_S"}),  # Name of the model in Ollama
                 "mmproj_file_url": ("STRING", {"default": "https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF/blob/main/mmproj-mlabonne_gemma-3-27b-it-abliterated-f32.gguf"}), # URL for the mmproj file
                 "image": ("IMAGE",),  # ComfyUI Image object
                 "prompt": ("STRING", {"default": ""}),
@@ -99,7 +99,7 @@ class GemmaMultimodalOllama:
                 response = requests.post(f"{ollama_base_url}/api/pull", json={"name": model_name, "stream": False})
                 response.raise_for_status()
             except requests.exceptions.RequestException as e:
-                error_message = f"Model '{model_name}' not found in Ollama. Please ensure it is installed. It may need to be pulled using Ollama CLI. Error: {e}"
+                error_message = f"Model '{model_name}' not found in Ollama. Please ensure it is installed. It may need to be pulled using the command: ollama run https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF/blob/main/mlabonne_gemma-3-27b-it-abliterated-IQ2_S.gguf. Error: {e}"
                 print(error_message)
                 return (error_message,)
 
