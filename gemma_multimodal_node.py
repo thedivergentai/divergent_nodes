@@ -56,11 +56,13 @@ class GemmaMultimodal:
     def download_file(self, repo_id, filename, local_filename):
         """Downloads a file from Hugging Face Hub using hf_hub_download."""
         try:
+            print(f"Downloading {filename} from Hugging Face Hub...")  # Add print statement before download
             # Use hf_hub_download to download the file, which handles caching
             cached_filepath = hf_hub_download(
                 repo_id=repo_id,
                 filename=filename,
             )
+            print(f"Download of {filename} from Hugging Face Hub completed.")  # Add print statement after download
             # Copy the cached file to the filename expected by the node
             import shutil
             shutil.copy2(cached_filepath, local_filename) # Use copy2 to preserve metadata
