@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 import json
 import requests
-from ..utils.download_manager import download_file, clone_repository  # Import the download function
+from .utils.download_manager import download_file, clone_repository  # Import the download function
 
 def convert_to_rgb(image):
     if image.mode in ("L", "LA"):
