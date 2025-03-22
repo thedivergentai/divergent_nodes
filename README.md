@@ -11,10 +11,33 @@ This repository offers a curated set of custom nodes that introduce new function
 *   **✨ Divergent CLIP Token Counter**: Precisely count CLIP tokens in your text prompts.
 *   **✨ UTF8 Encoder**: Ensures text is encoded in UTF-8 format to prevent workflow errors.
 *   **💾 Data Store**: Stores any type of data locally within a specified directory, using a memory stack system.
+*   **✨ Gemma Multimodal Ollama**: Integrates the Gemma model via Ollama for multimodal tasks, allowing you to process images and prompts.
 
 ---
 
-## 🛠️ Installation Guide
+## 🛠️ Installation
+
+1.  **Navigate to your ComfyUI installation's `custom_nodes` directory.** This directory is located within your ComfyUI installation folder.
+
+2.  **Clone the Repository:**
+
+    ```bash
+    git clone https://github.com/thedivergentai/divergent_nodes.git
+    ```
+   (Or download as a ZIP and extract to the `custom_nodes` directory.)
+
+3.  **Install Dependencies:**
+
+    ```bash
+    cd divergent_nodes
+    pip install -r requirements.txt
+    ```
+
+4.  **Restart ComfyUI:** Restart to load the new nodes.
+
+---
+
+## 🧰 Node Details
 
 1.  **Navigate to your ComfyUI installation's `custom_nodes` directory.** This directory is located within your ComfyUI installation folder.
 
@@ -71,6 +94,24 @@ This repository offers a curated set of custom nodes that introduce new function
 *   None
 
 **Key Features:** Stores any data type, uses a memory stack system, and saves data to text files.
+
+### ✨ Gemma Multimodal Ollama
+
+**Description:** Integrates the Gemma model via Ollama for multimodal tasks, allowing you to process images and prompts.
+
+**Inputs:**
+
+*   `ollama_base_url` (STRING): Base URL of the Ollama server (default: http://localhost:11434).
+*   `model_name` (STRING): Name of the Gemma model in Ollama (default: gemma-3-27b-it-abliterated-IQ2_S.gguf).
+*   `mmproj_file_url` (STRING): URL for the mmproj file (default: https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF/blob/main/mmproj-mlabonne_gemma-3-27b-it-abliterated-f32.gguf).
+*   `image` (IMAGE): ComfyUI Image object.
+*   `prompt` (STRING): Text prompt.
+
+**Outputs:**
+
+*   `response` (STRING): The generated text response from Gemma.
+
+**Key Features:** Multimodal processing with Gemma and Ollama, image and text input, easy integration.
 
 ---
 
