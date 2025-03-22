@@ -87,13 +87,20 @@ class GemmaMultimodal:
                 if not os.path.exists(model_path):
                     raise FileNotFoundError(f"Model file not found: {model_path}")
 
-                self.model = llama_cpp.Llama(
-                    model_path=model_path,  # Use model_path directly, which points to the downloaded file
-                    n_gpu_layers=32,  # Or however many layers you want to offload to the GPU
-                    n_threads=8,  # Adjust based on your system
-                    verbose=False,  # Suppress the verbose output. Useful for ComfyUI.
-                )
-                self.model_path = gemma_model_url
+                print(f"Model path: {model_path}") # Print the model path
+                print(f"Current working directory: {os.getcwd()}") # Print the current working directory
+
+                try:
+                    self.model = llama_cpp.Llama(
+                        model_path=model_path,  # Use model_path directly, which points to the downloaded file
+                        n_gpu_layers=32,  # Or however many layers you want to offload to the GPU
+                        n_threads=8,  # Adjust based on your system
+                        verbose=False,  # Suppress the verbose output. Useful for ComfyUI.
+                    )
+                    self.model_path = gemma_model_url
+                except Exception as e:
+                    print(f"Detailed error loading Gemma model: {e}") # Print detailed error message
+                    raise Exception(f"Error loading Gemma model: {e}")
             except FileNotFoundError as e:
                 raise e # Re-raise the FileNotFoundError to be caught by the outer exception handler
             except Exception as e:
