@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from PIL import Image
 import io
-import requests
+from huggingface_hub import hf_hub_download
 
 # Add llama.cpp to sys.path.  This might need adjustment based on your environment.
 # Assuming llama-cpp-python is installed in a venv, and you want to use that venv.
@@ -52,46 +52,24 @@ class GemmaMultimodal:
         self.model_path = None
         self.mmproj_path = None
 
-    def download_file(self, url, filename):
-        """Downloads a file from a URL and saves it with a progress bar."""
+    def huggingface_download(self, repo_id, filename):
+        """Downloads a file from Hugging Face Hub using the huggingface_hub library."""
         try:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()  # Raise an exception for bad status codes
-
-            total_size_in_bytes = int(response.headers.get('content-length', 0))
-            block_size = 1024  # 1 KB
-            progress_bar = None
-
-            # Check if tqdm is installed, if not, don't use the progress bar
-            try:
-                from tqdm import tqdm
-                progress_bar = tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True)
-            except ImportError:
-                pass  # tqdm is not installed, so we'll just download without a progress bar
-
-            with open(filename, 'wb') as file:
-                for data in response.iter_content(block_size):
-                    file.write(data)
-                    if progress_bar:
-                        progress_bar.update(len(data))
-
-            if progress_bar:
-                progress_bar.close()
-            return filename
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Error downloading {url}: {e}")
+            local_path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True, cache_dir="huggingface_cache")
+            return local_path
         except Exception as e:
-            raise Exception(f"General error downloading {url}: {e}")
+            raise Exception(f"Error downloading {filename} from Hugging Face Hub: {e}")
 
     def load_model(self, gemma_model_url):
         """Loads the Gemma model from the given URL."""
         if self.model is None or self.model_path != gemma_model_url:
             try:
-                # Create a temporary file.  Important to create in a secure manner.
-                # We use a deterministic filename based on the URL.
-                model_filename = os.path.basename(gemma_model_url)
-                # Download the model file.
-                model_path = self.download_file(gemma_model_url, model_filename)
+                # Extract repo_id and filename from the URL
+                repo_id = "/".join(gemma_model_url.split("/")[3:5])  # e.g., bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF
+                model_filename = gemma_model_url.split("/")[-1]  # e.g., mlabonne_gemma-3-27b-it-abliterated-Q5_K_L.gguf
+
+                # Download the model file using huggingface_hub
+                model_path = self.huggingface_download(repo_id, model_filename)
 
                 self.model = llama_cpp.Llama(
                     model_path=model_path,
@@ -107,10 +85,12 @@ class GemmaMultimodal:
         """Loads the MMPROJ file from the given URL."""
         if self.mmproj is None or self.mmproj_path != mmproj_url:
             try:
-                # Create a temporary file. Use a deterministic filename.
-                mmproj_filename = os.path.basename(mmproj_url)
-                # Download the mmproj file
-                mmproj_path = self.download_file(mmproj_url, mmproj_filename)
+                # Extract repo_id and filename from the URL
+                repo_id = "/".join(mmproj_url.split("/")[3:5])  # e.g., bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF
+                mmproj_filename = mmproj_url.split("/")[-1]  # e.g., mmproj-mlabonne_gemma-3-27b-it-abliterated-f32.gguf
+
+                # Download the mmproj file using huggingface_hub
+                mmproj_path = self.huggingface_download(repo_id, mmproj_filename)
                 self.mmproj = torch.load(mmproj_path, map_location=torch.device('cpu'))
                 self.mmproj_path = mmproj_url
             except Exception as e:
@@ -127,7 +107,7 @@ class GemmaMultimodal:
         Returns:
             A torch tensor of shape (batch, 3, height, width), normalized and ready for the model.
         """
-        # ComfyUI images are numpy arrays of shape (batch_size, height, width, 3).
+        # ComfyUI images are numpy arrays of shape (batch_size, height, width, 3)).
         # We need to convert them to PIL Images first, then to torch tensors.
 
         images = []
@@ -152,13 +132,14 @@ class GemmaMultimodal:
         image_tensor = torch.stack(processed_images)
         return image_tensor
 
-    def process(self, gemma_model_url, mmproj_url, image, prompt):
+    def process(self, ollama_base_url, model_name, mmproj_file_url, image, prompt):
         """
         Processes the image and prompt using the Gemma model and MMPROJ.
 
         Args:
-            gemma_model_url (str): URL to the Gemma model file.
-            mmproj_url (str): URL to the MMPROJ file.
+            ollama_base_url (str): Base URL of the Ollama server.
+            model_name (str): Name of the Gemma model in Ollama.
+            mmproj_file_url (str): URL to the MMPROJ file.
             image (torch.Tensor): ComfyUI Image object.
             prompt (str): Text prompt.
 
