@@ -80,11 +80,11 @@ class GemmaMultimodal:
                 model_path = self.download_file(
                     repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
                     filename=model_filename,
-                    local_filename=model_filename
+                    local_filename=model_filename # Keep local_filename for download_file, but not for Llama
                 )
 
                 self.model = llama_cpp.Llama(
-                    model_path=model_filename,  # Use the local filename
+                    model_path=model_path,  # Use model_path directly, which points to the downloaded file
                     n_gpu_layers=32,  # Or however many layers you want to offload to the GPU
                     n_threads=8,  # Adjust based on your system
                     verbose=False,  # Suppress the verbose output. Useful for ComfyUI.
