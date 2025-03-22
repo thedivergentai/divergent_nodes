@@ -19,7 +19,7 @@ except ImportError:
 
 
 
-class GemmaMultimodalOllama:
+class GemmaMultimodal:
     """
     A custom ComfyUI node to integrate the Gemma-3-27b-it-abliterated model for multimodal tasks.
     """
