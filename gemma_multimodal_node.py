@@ -6,6 +6,7 @@ from PIL import Image
 import io
 import requests
 from huggingface_hub import hf_hub_download
+import tqdm # Import tqdm at the top
 
 # Add llama.cpp to sys.path.  This might need adjustment based on your environment.
 # Assuming llama-cpp-python is installed in a venv, and you want to use that venv.
@@ -56,17 +57,22 @@ class GemmaMultimodal:
     def download_file(self, repo_id, filename, local_filename):
         """Downloads a file from Hugging Face Hub using hf_hub_download with progress bar."""
         try:
+            from huggingface_hub.utils import enable_progress_bars
+            enable_progress_bars()  # Ensure progress bars are enabled
+            import tqdm  # Import tqdm
+
             print(f"Downloading {filename} from Hugging Face Hub...")  # Add print statement before download
             # Use hf_hub_download to download the file, which handles caching and progress bar
-            cached_filepath = hf_hub_download(
-                repo_id=repo_id,
-                filename=filename,
-                progress=True,  # Enable progress bar
-            )
+            with tqdm.auto.tqdm() as progress_bar:  # Use tqdm.auto.tqdm for automatic notebook/terminal detection
+                cached_filepath = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    progress_bar=progress_bar,  # Pass tqdm instance to hf_hub_download
+                )
             print(f"Download of {filename} from Hugging Face Hub completed.")  # Add print statement after download
             # Copy the cached file to the filename expected by the node
             import shutil
-            shutil.copy2(cached_filepath, local_filename) # Use copy2 to preserve metadata
+            shutil.copy2(cached_filepath, local_filename)  # Use copy2 to preserve metadata
 
             return local_filename
         except Exception as e:
@@ -77,16 +83,16 @@ class GemmaMultimodal:
         if self.model is None or self.model_path != gemma_model_url:
             try:
                 model_filename = os.path.basename(gemma_model_url)
-                model_local_filename =  model_filename # Use the original filename as local filename
+                model_local_filename = model_filename  # Use the original filename as local filename
                 # Download the model file from Hugging Face Hub.
                 model_path = self.download_file(
                     repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
                     filename=model_filename,
-                    local_filename=model_local_filename
+                    local_filename=model_local_filename,
                 )
 
                 self.model = llama_cpp.Llama(
-                    model_path=model_local_filename, # Use the local filename
+                    model_path=model_local_filename,  # Use the local filename
                     n_gpu_layers=32,  # Or however many layers you want to offload to the GPU
                     n_threads=8,  # Adjust based on your system
                     verbose=False,  # Suppress the verbose output. Useful for ComfyUI.
@@ -100,14 +106,14 @@ class GemmaMultimodal:
         if self.mmproj is None or self.mmproj_path != mmproj_url:
             try:
                 mmproj_filename = os.path.basename(mmproj_url)
-                mmproj_local_filename = mmproj_filename # Use the original filename as local filename
+                mmproj_local_filename = mmproj_filename  # Use the original filename as local filename
                 # Download the mmproj file from Hugging Face Hub
                 mmproj_path = self.download_file(
                     repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
                     filename=mmproj_filename,
-                    local_filename=mmproj_local_filename
+                    local_filename=mmproj_local_filename,
                 )
-                self.mmproj = torch.load(mmproj_local_filename, map_location=torch.device('cpu')) # Use the local filename
+                self.mmproj = torch.load(mmproj_local_filename, map_location=torch.device('cpu'))  # Use the local filename
                 self.mmproj_path = mmproj_url
             except Exception as e:
                 raise Exception(f"Error loading MMPROJ: {e}")
