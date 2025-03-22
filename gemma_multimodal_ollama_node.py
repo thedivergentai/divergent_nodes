@@ -56,7 +56,7 @@ class GemmaMultimodalOllama:
         images = []
         for img in image:
             # Convert numpy array to PIL Image
-            img = Image.fromarray(img.astype(np.uint8), 'RGB')
+            img = Image.fromarray(np.array(img).astype(np.uint8), 'RGB')
             img = convert_to_rgb(img)
 
             # Resize the image.  Important for consistent input to the model.
