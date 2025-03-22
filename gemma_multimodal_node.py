@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image
 import io
 import requests
+from huggingface_hub import hf_hub_download
 
 # Add llama.cpp to sys.path.  This might need adjustment based on your environment.
 # Assuming llama-cpp-python is installed in a venv, and you want to use that venv.
@@ -41,7 +42,7 @@ class GemmaMultimodal:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("response",)
     FUNCTION = "process"
-    CATEGORY = "VLM"  # Changed category to VLM
+    CATEGORY = "Divergent Nodes 👽/VLM"  # Changed category to VLM
 
     def __init__(self):
         """
@@ -52,49 +53,39 @@ class GemmaMultimodal:
         self.model_path = None
         self.mmproj_path = None
 
-    def download_file(self, url, filename):
-        """Downloads a file from a URL and saves it with a progress bar."""
+    def download_file(self, repo_id, filename, local_filename):
+        """Downloads a file from Hugging Face Hub using hf_hub_download."""
         try:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()  # Raise an exception for bad status codes
+            # Use hf_hub_download to download the file, which handles caching
+            cached_filepath = hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                local_dir=".", # Save to the current directory
+                local_dir_use_symlinks=False, # Avoid symlinks for broader compatibility
+            )
+            # Copy the cached file to the filename expected by the node
+            import shutil
+            shutil.copy2(cached_filepath, local_filename) # Use copy2 to preserve metadata
 
-            total_size_in_bytes = int(response.headers.get('content-length', 0))
-            block_size = 1024  # 1 KB
-            progress_bar = None
-
-            # Check if tqdm is installed, if not, don't use the progress bar
-            try:
-                from tqdm import tqdm
-                progress_bar = tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True)
-            except ImportError:
-                pass  # tqdm is not installed, so we'll just download without a progress bar
-
-            with open(filename, 'wb') as file:
-                for data in response.iter_content(block_size):
-                    file.write(data)
-                    if progress_bar:
-                        progress_bar.update(len(data))
-
-            if progress_bar:
-                progress_bar.close()
-            return filename
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Error downloading {url}: {e}")
+            return local_filename
         except Exception as e:
-            raise Exception(f"General error downloading {url}: {e}")
+            raise Exception(f"Error downloading {filename} from Hugging Face Hub: {e}")
 
     def load_model(self, gemma_model_url):
         """Loads the Gemma model from the given URL."""
         if self.model is None or self.model_path != gemma_model_url:
             try:
-                # Create a temporary file.  Important to create in a secure manner.
-                # We use a deterministic filename based on the URL.
                 model_filename = os.path.basename(gemma_model_url)
-                # Download the model file.
-                model_path = self.download_file(gemma_model_url, model_filename)
+                model_local_filename =  model_filename # Use the original filename as local filename
+                # Download the model file from Hugging Face Hub.
+                model_path = self.download_file(
+                    repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
+                    filename=model_filename,
+                    local_filename=model_local_filename
+                )
 
                 self.model = llama_cpp.Llama(
-                    model_path=model_path,
+                    model_path=model_local_filename, # Use the local filename
                     n_gpu_layers=32,  # Or however many layers you want to offload to the GPU
                     n_threads=8,  # Adjust based on your system
                     verbose=False,  # Suppress the verbose output. Useful for ComfyUI.
@@ -107,11 +98,15 @@ class GemmaMultimodal:
         """Loads the MMPROJ file from the given URL."""
         if self.mmproj is None or self.mmproj_path != mmproj_url:
             try:
-                # Create a temporary file. Use a deterministic filename.
                 mmproj_filename = os.path.basename(mmproj_url)
-                # Download the mmproj file
-                mmproj_path = self.download_file(mmproj_url, mmproj_filename)
-                self.mmproj = torch.load(mmproj_path, map_location=torch.device('cpu'))
+                mmproj_local_filename = mmproj_filename # Use the original filename as local filename
+                # Download the mmproj file from Hugging Face Hub
+                mmproj_path = self.download_file(
+                    repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
+                    filename=mmproj_filename,
+                    local_filename=mmproj_local_filename
+                )
+                self.mmproj = torch.load(mmproj_local_filename, map_location=torch.device('cpu')) # Use the local filename
                 self.mmproj_path = mmproj_url
             except Exception as e:
                 raise Exception(f"Error loading MMPROJ: {e}")
@@ -134,7 +129,6 @@ class GemmaMultimodal:
         for img in image:
             # Convert numpy array to PIL Image.  Handles different modes.
             img = Image.fromarray(img.astype(np.uint8), 'RGB')
-            # img = convert_to_rgb(img) # convert_to_rgb is not defined in the code, removing it
             images.append(img)
 
         # Now, process the list of PIL images.
