@@ -84,7 +84,7 @@ class GemmaMultimodal:
                 )
 
                 self.model = llama_cpp.Llama(
-                    model_path= model_filename, # Use the local filename
+                    model_path=model_filename,  # Use the local filename
                     n_gpu_layers=32,  # Or however many layers you want to offload to the GPU
                     n_threads=8,  # Adjust based on your system
                     verbose=False,  # Suppress the verbose output. Useful for ComfyUI.
