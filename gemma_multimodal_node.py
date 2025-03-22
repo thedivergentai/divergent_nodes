@@ -54,13 +54,14 @@ class GemmaMultimodal:
         self.mmproj_path = None
 
     def download_file(self, repo_id, filename, local_filename):
-        """Downloads a file from Hugging Face Hub using hf_hub_download."""
+        """Downloads a file from Hugging Face Hub using hf_hub_download with progress bar."""
         try:
             print(f"Downloading {filename} from Hugging Face Hub...")  # Add print statement before download
-            # Use hf_hub_download to download the file, which handles caching
+            # Use hf_hub_download to download the file, which handles caching and progress bar
             cached_filepath = hf_hub_download(
                 repo_id=repo_id,
                 filename=filename,
+                progress=True,  # Enable progress bar
             )
             print(f"Download of {filename} from Hugging Face Hub completed.")  # Add print statement after download
             # Copy the cached file to the filename expected by the node
