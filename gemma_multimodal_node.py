@@ -60,8 +60,6 @@ class GemmaMultimodal:
             cached_filepath = hf_hub_download(
                 repo_id=repo_id,
                 filename=filename,
-                local_dir=".", # Save to the current directory
-                local_dir_use_symlinks=False, # Avoid symlinks for broader compatibility
             )
             # Copy the cached file to the filename expected by the node
             import shutil
