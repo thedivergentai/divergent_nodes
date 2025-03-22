@@ -76,30 +76,21 @@ class GemmaMultimodal:
         if self.model is None or self.model_path != gemma_model_url:
             try:
                 model_filename = os.path.basename(gemma_model_url)
-                # Download the model file from Hugging Face Hub.
-                model_path = self.download_file(
+                # Download the model file from Hugging Face Hub and get the cached path.
+                model_path = hf_hub_download(
                     repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
                     filename=model_filename,
-                    local_filename=model_filename # Keep local_filename for download_file, but not for Llama
+                ) # hf_hub_download returns the cached path
+
+                print(f"Using cached model path: {model_path}") # Log the cached model path
+
+                self.model = llama_cpp.Llama(
+                    model_path=model_path,  # Load Llama model directly from the cached path
+                    n_gpu_layers=32,
+                    n_threads=8,
+                    verbose=False,
                 )
-
-                # Construct absolute path to the model file
-                absolute_model_path = os.path.join(os.getcwd(), model_filename) # Get absolute path
-
-                # Add logging to confirm the absolute model path
-                print(f"Absolute model path: {absolute_model_path}")
-
-                try:
-                    self.model = llama_cpp.Llama(
-                        model_path=absolute_model_path,  # Use absolute model path
-                        n_gpu_layers=32,
-                        n_threads=8,
-                        verbose=False,
-                    )
-                    self.model_path = gemma_model_url
-                except Exception as e:
-                    print(f"Detailed error loading Gemma model: {e}") # Print detailed error message
-                    raise Exception(f"Error loading Gemma model: {e}")
+                self.model_path = gemma_model_url
             except Exception as e:
                 raise Exception(f"Error loading Gemma model: {e}")
 
