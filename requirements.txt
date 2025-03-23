@@ -1,0 +1,5 @@
+torch
+Pillow
+requests
+huggingface_hub
+llama-cpp-python>=0.3.8
