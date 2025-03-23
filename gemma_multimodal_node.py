@@ -19,7 +19,6 @@ except ImportError:
     sys.exit(1)
 
 
-
 class GemmaMultimodal:
     """
     A custom ComfyUI node to integrate the Gemma-3-27b-it-abliterated model for multimodal tasks.
@@ -83,103 +82,6 @@ class GemmaMultimodal:
                 )  # hf_hub_download returns the cached path
 
                 print(f"Using cached model path: {model_path}")  # Log the cached model path
-
-                try:
-                    self.model = llama_cpp.Llama(
-                        model_path=model_path,  # Load Llama model directly from the cached path
-                        n_gpu_layers=32,
-                        n_threads=8,
-                        verbose=False,
-                    )
-                    self.model_path = gemma_model_url
-                except Exception as e:
-                    print(f"Detailed error loading Gemma model: {e}")  # Log detailed error message
-                    raise Exception(f"Error loading Gemma model: {e}")
-import os
-import sys
-import torch
-import numpy as np
-from PIL import Image
-import io
-import requests
-from huggingface_hub import hf_hub_download
-
-# Add llama.cpp to sys.path.  This might need adjustment based on your environment.
-# Assuming llama-cpp-python is installed in a venv, and you want to use that venv.
-# This is crucial for ComfyUI to find the llama-cpp-python module.
-try:
-    import llama_cpp
-except ImportError:
-    print("Error: llama-cpp-python is not installed.  Please install it,")
-    print("       and ensure it's in your PYTHONPATH or virtual environment.")
-    print("       For example: pip install llama-cpp-python")
-    sys.exit(1)
-
-
-
-class GemmaMultimodal:
-    """
-    A custom ComfyUI node to integrate the Gemma-3-27b-it-abliterated model for multimodal tasks.
-    """
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        """
-        Defines the input types for the node.
-        """
-        return {
-            "required": {
-                "gemma_model_url": ("STRING", {"default": "https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF/resolve/main/mlabonne_gemma-3-27b-it-abliterated-Q4_K_M.gguf"}),
-                "mmproj_url": ("STRING", {"default": "https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF/resolve/main/mmproj-mlabonne_gemma-3-27b-it-abliterated-f32.gguf"}),
-                "image": ("IMAGE",),  # ComfyUI Image object
-                "prompt": ("STRING", {"default": ""}),
-            },
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("response",)
-    FUNCTION = "process"
-    CATEGORY = "Divergent Nodes 👽/VLM"  # Changed category to VLM
-
-    def __init__(self):
-        """
-        Initializes the GemmaMultimodal node.
-        """
-        self.model = None
-        self.mmproj = None
-        self.model_path = None
-        self.mmproj_path = None
-
-    def download_file(self, repo_id, filename, local_filename):
-        """Downloads a file from Hugging Face Hub using hf_hub_download."""
-        try:
-            print(f"Downloading {filename} from Hugging Face Hub...")  # Add print statement before download
-            # Use hf_hub_download to download the file, which handles caching
-            cached_filepath = hf_hub_download(
-                repo_id=repo_id,
-                filename=filename,
-            )
-            print(f"Download of {filename} from Hugging Face Hub completed.")  # Add print statement after download
-            # Copy the cached file to the filename expected by the node
-            import shutil
-            shutil.copy2(cached_filepath, local_filename) # Use copy2 to preserve metadata
-
-            return local_filename
-        except Exception as e:
-            raise Exception(f"Error downloading {filename} from Hugging Face Hub: {e}")
-
-    def load_model(self, gemma_model_url):
-        """Loads the Gemma model from the given URL."""
-        if self.model is None or self.model_path != gemma_model_url:
-            try:
-                model_filename = os.path.basename(gemma_model_url)
-                # Download the model file from Hugging Face Hub and get the cached path.
-                model_path = hf_hub_download(
-                    repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
-                    filename=model_filename,
-                ) # hf_hub_download returns the cached path
-
-                print(f"Using cached model path: {model_path}") # Log the cached model path
 
                 self.model = llama_cpp.Llama(
                     model_path=model_path,  # Load Llama model directly from the cached path
