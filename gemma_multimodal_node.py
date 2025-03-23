@@ -35,6 +35,8 @@ class GemmaMultimodal:
                 "mmproj_url": ("STRING", {"default": "https://huggingface.co/bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF/resolve/main/mmproj-mlabonne_gemma-3-27b-it-abliterated-f32.gguf"}),
                 "image": ("IMAGE",),  # ComfyUI Image object
                 "prompt": ("STRING", {"default": ""}),
+                "enable_cache": ("BOOLEAN", {"default": True}),
+                "max_tokens": ("INT", {"default": 512}),
             },
         }
 
@@ -51,6 +53,8 @@ class GemmaMultimodal:
         self.mmproj = None
         self.model_path = None
         self.mmproj_path = None
+        self.cached_model_url = None
+        self.cached_mmproj_url = None
 
     def download_file(self, repo_id, filename, local_filename):
         """Downloads a file from Hugging Face Hub using hf_hub_download."""
@@ -70,45 +74,53 @@ class GemmaMultimodal:
         except Exception as e:
             raise Exception(f"Error downloading {filename} from Hugging Face Hub: {e}")
 
-    def load_model(self, gemma_model_url):
+    def load_model(self, gemma_model_url, enable_cache):
         """Loads the Gemma model from the given URL."""
-        if self.model is None or self.model_path != gemma_model_url:
-            try:
-                model_filename = os.path.basename(gemma_model_url)
-                # Download the model file from Hugging Face Hub and get the cached path.
-                model_path = hf_hub_download(
-                    repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
-                    filename=model_filename,
-                )  # hf_hub_download returns the cached path
+        if enable_cache and self.model is not None and self.cached_model_url == gemma_model_url:
+            print("Using cached Gemma model.")
+            return  # Use cached model
 
-                print(f"Using cached model path: {model_path}")  # Log the cached model path
+        try:
+            model_filename = os.path.basename(gemma_model_url)
+            # Download the model file from Hugging Face Hub and get the cached path.
+            model_path = hf_hub_download(
+                repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
+                filename=model_filename,
+            )  # hf_hub_download returns the cached path
 
-                self.model = llama_cpp.Llama(
-                    model_path=model_path,  # Load Llama model directly from the cached path
-                    n_gpu_layers=32,
-                    n_threads=8,
-                    verbose=False,
-                )
-                self.model_path = gemma_model_url
-            except Exception as e:
-                raise Exception(f"Error loading Gemma model: {e}")
+            print(f"Using cached model path: {model_path}")  # Log the cached model path
 
-    def load_mmproj(self, mmproj_url):
+            self.model = llama_cpp.Llama(
+                model_path=model_path,  # Load Llama model directly from the cached path
+                n_gpu_layers=32,
+                n_threads=8,
+                verbose=False,
+            )
+            self.model_path = gemma_model_url
+            self.cached_model_url = gemma_model_url  # Update cached URL
+        except Exception as e:
+            raise Exception(f"Error loading Gemma model: {e}")
+
+    def load_mmproj(self, mmproj_url, enable_cache):
         """Loads the MMPROJ file from the given URL."""
-        if self.mmproj is None or self.mmproj_path != mmproj_url:
-            try:
-                mmproj_filename = os.path.basename(mmproj_url)
-                mmproj_local_filename = mmproj_filename # Use the original filename as local filename
-                # Download the mmproj file from Hugging Face Hub
-                mmproj_path = self.download_file(
-                    repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
-                    filename=mmproj_filename,
-                    local_filename=mmproj_local_filename
-                )
-                self.mmproj = torch.load(mmproj_local_filename, map_location=torch.device('cpu')) # Use the local filename
-                self.mmproj_path = mmproj_url
-            except Exception as e:
-                raise Exception(f"Error loading MMPROJ: {e}")
+        if  enable_cache and self.mmproj is not None and self.cached_mmproj_url == mmproj_url:
+            print("Using cached MMPROJ.")
+            return  # Use cached mmproj
+
+        try:
+            mmproj_filename = os.path.basename(mmproj_url)
+            mmproj_local_filename = mmproj_filename # Use the original filename as local filename
+            # Download the mmproj file from Hugging Face Hub
+            mmproj_path = self.download_file(
+                repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
+                filename=mmproj_filename,
+                local_filename=mmproj_local_filename
+            )
+            self.mmproj = torch.load(mmproj_local_filename, map_location=torch.device('cpu')) # Use the local filename
+            self.mmproj_path = mmproj_url
+            self.cached_mmproj_url = mmproj_url  # Update cached URL
+        except Exception as e:
+            raise Exception(f"Error loading MMPROJ: {e}")
 
     def preprocess_image(self, image):
         """
@@ -145,7 +157,7 @@ class GemmaMultimodal:
         image_tensor = torch.stack(processed_images)
         return image_tensor
 
-    def process(self, gemma_model_url, mmproj_url, image, prompt):
+    def process(self, gemma_model_url, mmproj_url, image, prompt, enable_cache, max_tokens):
         """
         Processes the image and prompt using the Gemma model and MMPROJ.
 
@@ -160,8 +172,8 @@ class GemmaMultimodal:
         """
         try:
             # Load the model and mmproj if they are not already loaded, or if the paths have changed.
-            self.load_model(gemma_model_url)
-            self.load_mmproj(mmproj_url)
+            self.load_model(gemma_model_url, enable_cache)
+            self.load_mmproj(mmproj_url, enable_cache)
 
             # Preprocess the image.
             image_tensor = self.preprocess_image(image)
@@ -183,7 +195,7 @@ class GemmaMultimodal:
                         "content": prompt_text,
                     },
                 ],
-                max_tokens=512,  # Or adjust as needed
+                max_tokens=max_tokens,  # Or adjust as needed
                 temperature=0.2,  # temperature
             )
             response = output["choices"][0]["message"]["content"]
