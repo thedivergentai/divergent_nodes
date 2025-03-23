@@ -185,7 +185,8 @@ class GemmaMultimodal:
 
             # Prepare the prompt.  This is crucial to get right.  The original notebook
             # uses a specific format, and we must match it.
-            prompt_text = f"<image>\n{prompt}"  # The \n was missing
+            prompt_text = f"<bos><start_of_turn>user\\n\\n{prompt}<end_of_turn><start_of_turn>model\\n" if image is None else f"<image>\\n<bos><start_of_turn>user\\n\\n{prompt}<end_of_turn><start_of_turn>model\\n"
+
 
             # Generate the response.  This part remains similar to the original.
             output = self.model.create_chat_completion(
