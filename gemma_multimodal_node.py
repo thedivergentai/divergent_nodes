@@ -6,17 +6,7 @@ from PIL import Image
 import io
 import requests
 from huggingface_hub import hf_hub_download
-
-# Add llama.cpp to sys.path.  This might need adjustment based on your environment.
-# Assuming llama-cpp-python is installed in a venv, and you want to use that venv.
-# This is crucial for ComfyUI to find the llama-cpp-python module.
-try:
-    import llama_cpp
-except ImportError:
-    print("Error: llama-cpp-python is not installed.  Please install it,")
-    print("       and ensure it's in your PYTHONPATH or virtual environment.")
-    print("       For example: pip install llama-cpp-python")
-    sys.exit(1)
+from vllm import LLM, SamplingParams
 
 
 class GemmaChatHandler:
@@ -58,7 +48,7 @@ class GemmaChatHandler:
 
 class GemmaMultimodal:
     """
-    A custom ComfyUI node to integrate the Gemma-3-27b-it-abliterated model for multimodal tasks.
+    A custom ComfyUI node to integrate the Gemma-3-27b-it-abliterated model for multimodal tasks using vLLM.
     """
 
     @classmethod
@@ -92,72 +82,52 @@ class GemmaMultimodal:
         self.mmproj_path = None
         self.cached_model_url = None
         self.cached_mmproj_url = None
-        self.chat_handler = None  # Add chat_handler
+        self.chat_handler = None
 
     def download_file(self, repo_id, filename, local_filename):
         """Downloads a file from Hugging Face Hub using hf_hub_download."""
         try:
-            print(f"Downloading {filename} from Hugging Face Hub...")  # Add print statement before download
-            # Use hf_hub_download to download the file, which handles caching
+            print(f"Downloading {filename} from Hugging Face Hub...")
             cached_filepath = hf_hub_download(
                 repo_id=repo_id,
                 filename=filename,
             )
-            print(f"Download of {filename} from Hugging Face Hub completed.")  # Add print statement after download
-            # Copy the cached file to the filename expected by the node
+            print(f"Download of {filename} from Hugging Face Hub completed.")
             import shutil
-            shutil.copy2(cached_filepath, local_filename) # Use copy2 to preserve metadata
-
+            shutil.copy2(cached_filepath, local_filename)
             return local_filename
         except Exception as e:
             raise Exception(f"Error downloading {filename} from Hugging Face Hub: {e}")
 
     def load_model(self, gemma_model_url, mmproj_url, enable_cache):
-        """Loads the Gemma model from the given URL."""
+        """Loads the Gemma model using vLLM."""
         if enable_cache and self.model is not None and self.cached_model_url == gemma_model_url:
             print("Using cached Gemma model.")
-            return  # Use cached model
+            return
 
         try:
             model_filename = os.path.basename(gemma_model_url)
-            # Download the model file from Hugging Face Hub and get the cached path.
             model_path = hf_hub_download(
                 repo_id="bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF",
                 filename=model_filename,
-            )  # hf_hub_download returns the cached path
-
-            print(f"Using cached model path: {model_path}")  # Log the cached model path
-
-            self.model = llama_cpp.Llama(
-                model_path=model_path,  # Load Llama model directly from the cached path
-                n_gpu_layers=32,
-                n_threads=8,
-                verbose=False,
             )
-            self.model_path = gemma_model_url
-            self.cached_model_url = gemma_model_url  # Update cached URL
 
-            self.chat_handler = GemmaChatHandler(mmproj_url)  # Load chat handler separately
+            print(f"Using cached model path: {model_path}")
+
+            self.model = LLM(model=model_path)
+            self.model_path = gemma_model_url
+            self.cached_model_url = gemma_model_url
+
+            self.chat_handler = GemmaChatHandler(mmproj_url)
         except Exception as e:
-            raise Exception(f"Error loading Gemma model: {e}")
+            raise Exception(f"Error loading Gemma model with vLLM: {e}")
 
     def load_mmproj(self, mmproj_url, enable_cache):
         """Loads the MMPROJ file from the given URL."""
         pass  # No longer needed
 
     def process(self, gemma_model_url, mmproj_url, image, prompt, enable_cache, max_tokens):
-        """
-        Processes the image and prompt using the Gemma model and MMPROJ.
-
-        Args:
-            gemma_model_url (str): URL to the Gemma model file.
-            mmproj_url (str): URL to the MMPROJ file.
-            image (torch.Tensor): ComfyUI Image object.
-            prompt (str): Text prompt.
-
-        Returns:
-            str: The generated text response.
-        """
+        """Processes the image and prompt using the Gemma model and MMPROJ with vLLM."""
         try:
             # Load the model and mmproj if they are not already loaded, or if the paths have changed.
             self.load_model(gemma_model_url, mmproj_url, enable_cache)
@@ -177,20 +147,20 @@ class GemmaMultimodal:
             prompt_text = self.chat_handler.format_prompt(prompt, image_features)
 
             # Generate the response.  This part remains similar to the original.
-            output = self.model.create_chat_completion(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt_text,
-                    },
-                ],
-                max_tokens=max_tokens,  # Or adjust as needed
-                temperature=0.2,  # temperature
-            )
-            response = output["choices"][0]["message"]["content"]
+            sampling_params = SamplingParams(temperature=0.2, top_p=1.0, max_tokens=max_tokens)
+
+            if image is None:
+                outputs = self.model.generate(prompt_text, sampling_params)
+            else:
+                outputs = self.model.generate(
+                    prompt=prompt_text,
+                    sampling_params=sampling_params,
+                    multi_modal_data={"image": image}
+                )
+
+            response = outputs[0].outputs[0].text
             return (response,)
 
         except Exception as e:
-            print(f"Error in GemmaMultimodal.process: {e}")  # Log the error
-            return (f"Error: {e}",)  # Return the error message as a string.  This is important
-            # so ComfyUI doesn't crash.
+            print(f"Error in GemmaMultimodal.process: {e}")
+            return (f"Error: {e}",)
