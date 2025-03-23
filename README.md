@@ -39,28 +39,6 @@ This repository offers a curated set of custom nodes that introduce new function
 
 ## 🧰 Node Details
 
-1.  **Navigate to your ComfyUI installation's `custom_nodes` directory.** This directory is located within your ComfyUI installation folder.
-
-2.  **Clone the Repository:**
-
-    ```bash
-    git clone https://github.com/thedivergentai/divergent_nodes.git
-    ```
-   (Or download as a ZIP and extract to the `custom_nodes` directory.)
-
-3.  **Install Dependencies:**
-
-    ```bash
-    cd divergent_nodes
-    pip install -r requirements.txt
-    ```
-
-4.  **Restart ComfyUI:** Restart to load the new nodes.
-
----
-
-## 🧰 Node Details
-
 ### Divergent CLIP Token Counter
 
 **Description:** Accurately count CLIP tokens in a text string. Essential for workflows with token limits.
@@ -136,6 +114,7 @@ See the [Troubleshooting/FAQ](https://github.com/thedivergentai/divergent_nodes/
 *   Transformers
 *   Hugging Face Hub
 *   GitPython
+*   Minimum `llama-cpp-python` version: 0.3.8
 
 ---
 
