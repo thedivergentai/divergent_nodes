@@ -20,15 +20,14 @@ except ImportError:
 
 
 class GemmaChatHandler:
-    def __init__(self, mmproj):
-        self.mmproj = mmproj
-
-    @classmethod
-    def from_pretrained(cls, model_path):
-        mmproj = torch.load(model_path, map_location=torch.device('cpu'))
-        return cls(mmproj)
+    def __init__(self, mmproj_path):
+        self.mmproj_path = mmproj_path
+        self.mmproj = torch.load(mmproj_path, map_location=torch.device('cpu'))
 
     def preprocess_image(self, image):
+        if image is None:
+            return None
+
         images = []
         for img in image:
             # Convert numpy array to PIL Image.  Handles different modes.
@@ -50,8 +49,8 @@ class GemmaChatHandler:
         image_tensor = torch.stack(processed_images)
         return image_tensor
 
-    def format_prompt(self, prompt, image=None):
-        if image is None:
+    def format_prompt(self, prompt, image_features=None):
+        if image_features is None:
             return f"<bos><start_of_turn>user\\n\\n{prompt}<end_of_turn><start_of_turn>model\\n"
         else:
             return f"<image>\\n<bos><start_of_turn>user\\n\\n{prompt}<end_of_turn><start_of_turn>model\\n"
@@ -93,7 +92,7 @@ class GemmaMultimodal:
         self.mmproj_path = None
         self.cached_model_url = None
         self.cached_mmproj_url = None
-        self.chat_handler = None # Add chat_handler
+        self.chat_handler = None  # Add chat_handler
 
     def download_file(self, repo_id, filename, local_filename):
         """Downloads a file from Hugging Face Hub using hf_hub_download."""
@@ -129,58 +128,22 @@ class GemmaMultimodal:
 
             print(f"Using cached model path: {model_path}")  # Log the cached model path
 
-            self.chat_handler = GemmaChatHandler.from_pretrained(mmproj_url) # Load chat handler
-
             self.model = llama_cpp.Llama(
                 model_path=model_path,  # Load Llama model directly from the cached path
-                chat_handler=self.chat_handler, # Pass chat_handler to Llama
                 n_gpu_layers=32,
                 n_threads=8,
                 verbose=False,
             )
             self.model_path = gemma_model_url
             self.cached_model_url = gemma_model_url  # Update cached URL
+
+            self.chat_handler = GemmaChatHandler(mmproj_url)  # Load chat handler separately
         except Exception as e:
             raise Exception(f"Error loading Gemma model: {e}")
 
     def load_mmproj(self, mmproj_url, enable_cache):
         """Loads the MMPROJ file from the given URL."""
-        pass # No longer needed
-
-    def preprocess_image(self, image):
-        """
-        Preprocesses the ComfyUI image into a format suitable for the model.
-        This function now handles the PIL conversion and normalization.
-
-        Args:
-            image: A ComfyUI Image object (numpy array of shape (batch, height, width, 3)).
-
-        Returns:
-            A torch tensor of shape (batch, 3, height, width), normalized and ready for the model.
-        """
-        # ComfyUI images are numpy arrays of shape (batch_size, height, width, 3)).
-        # We need to convert them to PIL Images first, then to torch tensors.
-
-        images = []
-        for img in image:
-            # Convert numpy array to PIL Image.  Handles different modes.
-            img = Image.fromarray(img.astype(np.uint8), 'RGB')
-            images.append(img)
-
-        # Now, process the list of PIL images.
-        processed_images = []
-        for img in images:
-            # Resize the image.  Use the same size as in your original notebook.
-            img = img.resize((224, 224))
-            # Convert to a PyTorch tensor and normalize.
-            img_tensor = torch.from_numpy(np.array(img)).float() / 255.0
-            # Rearrange dimensions to (C, H, W).
-            img_tensor = img_tensor.permute(2, 0, 1)
-            processed_images.append(img_tensor)
-
-        # Stack the individual image tensors to create a batch tensor.
-        image_tensor = torch.stack(processed_images)
-        return image_tensor
+        pass  # No longer needed
 
     def process(self, gemma_model_url, mmproj_url, image, prompt, enable_cache, max_tokens):
         """
@@ -202,14 +165,16 @@ class GemmaMultimodal:
             # Preprocess the image.
             image_tensor = self.chat_handler.preprocess_image(image)
 
-            # Process the image with the mmproj.
-            with torch.no_grad():
-                image_features = self.chat_handler.mmproj.encode_image(image_tensor)
-                image_features = image_features.float()
+            image_features = None
+            if image_tensor is not None:
+                # Process the image with the mmproj.
+                with torch.no_grad():
+                    image_features = self.chat_handler.mmproj.encode_image(image_tensor)
+                    image_features = image_features.float()
 
             # Prepare the prompt.  This is crucial to get right.  The original notebook
             # uses a specific format, and we must match it.
-            prompt_text = self.chat_handler.format_prompt(prompt, image)
+            prompt_text = self.chat_handler.format_prompt(prompt, image_features)
 
             # Generate the response.  This part remains similar to the original.
             output = self.model.create_chat_completion(
