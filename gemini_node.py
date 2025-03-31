@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from PIL import Image
 import google.generativeai as genai
+from google.generativeai.types import generation_types # For BlockReason enum
 from dotenv import load_dotenv, find_dotenv
 
 # --- Constants ---
@@ -42,6 +43,14 @@ SAFETY_SETTINGS_MAP = {
 # Reverse map for finding default friendly name
 SAFETY_THRESHOLD_TO_NAME = {v: k for k, v in SAFETY_SETTINGS_MAP.items()}
 
+# Map for BlockReason enum to string
+BLOCK_REASON_MAP = {
+    generation_types.BlockReason.BLOCK_REASON_UNSPECIFIED: "UNSPECIFIED",
+    generation_types.BlockReason.SAFETY: "SAFETY",
+    generation_types.BlockReason.OTHER: "OTHER",
+}
+
+
 # --- Helper Functions ---
 
 def tensor_to_pil(tensor):
@@ -55,14 +64,14 @@ def tensor_to_pil(tensor):
         if img_np.dtype == np.float32 or img_np.dtype == np.float64:
              img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
         elif img_np.dtype != np.uint8: # Handle other potential types if necessary
-             print(f"Warning: Unexpected tensor dtype {img_np.dtype}, attempting conversion.")
+             print(f"[GeminiNode] Warning: Unexpected tensor dtype {img_np.dtype}, attempting conversion.")
              img_np = img_np.astype(np.uint8) # Direct cast might not be ideal for all types
 
         try:
             pil_image = Image.fromarray(img_np)
             images.append(pil_image)
         except Exception as e:
-            print(f"Error converting tensor slice to PIL Image: {e}")
+            print(f"[GeminiNode] Error converting tensor slice to PIL Image: {e}")
             return None # Return None if conversion fails for any image in batch
 
     # Return only the first image if it's a single-image batch for Gemini
@@ -75,7 +84,7 @@ def get_available_models():
         load_dotenv(find_dotenv())
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            print("Warning: GEMINI_API_KEY not found in .env. Cannot fetch dynamic model list.")
+            print("[GeminiNode] Warning: GEMINI_API_KEY not found in .env. Cannot fetch dynamic model list.")
             return DEFAULT_MODELS
 
         genai.configure(api_key=api_key)
@@ -86,13 +95,14 @@ def get_available_models():
                  # Use the full name like 'models/gemini-1.5-flash-latest'
                  model_list.append(m.name)
         if not model_list:
-             print("Warning: No models supporting generateContent found via API. Using default list.")
+             print("[GeminiNode] Warning: No models supporting generateContent found via API. Using default list.")
              return DEFAULT_MODELS
         # Sort for consistency, maybe put 'latest' versions first?
         model_list.sort(key=lambda x: ('latest' not in x, x))
+        print(f"[GeminiNode] Fetched {len(model_list)} models from Gemini API.")
         return model_list
     except Exception as e:
-        print(f"Warning: Failed to fetch models from Gemini API: {e}. Using default list.")
+        print(f"[GeminiNode] Warning: Failed to fetch models from Gemini API: {e}. Using default list.")
         return DEFAULT_MODELS
 
 # --- ComfyUI Node Definition ---
@@ -154,9 +164,12 @@ class GeminiNode:
             load_dotenv(find_dotenv())
             self.api_key = os.getenv("GEMINI_API_KEY")
             if not self.api_key:
-                return ("ERROR: GEMINI_API_KEY not found in .env file.",)
+                error_msg = "ERROR: GEMINI_API_KEY not found in .env file."
+                print(f"[GeminiNode] {error_msg}")
+                return (error_msg,)
 
         try:
+            print(f"[GeminiNode] Configuring Gemini with API key...")
             genai.configure(api_key=self.api_key)
 
             # Map user-friendly safety names back to API constants
@@ -177,9 +190,9 @@ class GeminiNode:
 
             # Extract the actual model ID if the full name 'models/...' is passed
             model_id = model.split('/')[-1] if '/' in model else model
+            print(f"[GeminiNode] Using model: {model_id}")
 
             gemini_model = genai.GenerativeModel(
-                # Use the extracted model_id if necessary, though SDK might handle full name
                 model_name=model_id,
                 safety_settings=safety_settings,
                 generation_config=generation_config
@@ -189,24 +202,27 @@ class GeminiNode:
             pil_image = tensor_to_pil(image_optional)
 
             if pil_image:
-                 # Removed incorrect check based on model name. Let the API handle validation.
+                 print("[GeminiNode] Image provided, adding to content parts.")
                  content_parts.append(pil_image)
             elif "vision" in model_id: # Keep the warning for vision models without images
-                 print(f"Warning: Vision model '{model_id}' selected, but no image provided.")
+                 print(f"[GeminiNode] Warning: Vision model '{model_id}' selected, but no image provided.")
 
-
+            print(f"[GeminiNode] Sending request to Gemini API...")
             response = gemini_model.generate_content(content_parts)
 
             # Handle potential blocks or empty responses
             if not response.candidates:
-                 block_reason = "Unknown"
+                 block_reason_code = generation_types.BlockReason.BLOCK_REASON_UNSPECIFIED
                  finish_reason = "Unknown"
                  if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                      block_reason = response.prompt_feedback.block_reason
-                 # Sometimes finish_reason is on the response itself if no candidates
-                 if hasattr(response, 'finish_reason'):
+                      block_reason_code = response.prompt_feedback.block_reason
+                 if hasattr(response, 'finish_reason'): # Sometimes finish_reason is on the response itself
                       finish_reason = response.finish_reason
-                 return (f"Blocked/Failed: Generation failed. Block Reason: {block_reason}, Finish Reason: {finish_reason}",)
+
+                 block_reason_str = BLOCK_REASON_MAP.get(block_reason_code, f"Unknown ({block_reason_code})")
+                 error_msg = f"Blocked/Failed: Generation failed. Block Reason: {block_reason_str}, Finish Reason: {finish_reason}"
+                 print(f"[GeminiNode] {error_msg}")
+                 return (error_msg,)
 
 
             # Accessing generated text safely
@@ -214,35 +230,43 @@ class GeminiNode:
             try:
                  candidate = response.candidates[0]
                  # Check finish reason first
-                 if candidate.finish_reason == 'SAFETY':
+                 if candidate.finish_reason == generation_types.FinishReason.SAFETY:
                       safety_ratings_str = ', '.join([f"{r.category.name}: {r.probability.name}" for r in candidate.safety_ratings])
-                      return (f"Blocked: Response stopped due to safety settings. Ratings: [{safety_ratings_str}]",)
+                      error_msg = f"Blocked: Response stopped due to safety settings. Ratings: [{safety_ratings_str}]"
+                      print(f"[GeminiNode] {error_msg}")
+                      return (error_msg,)
                  elif candidate.content and candidate.content.parts:
                       generated_text = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text'))
+                      print(f"[GeminiNode] Successfully generated text (length: {len(generated_text)}).")
                  else:
                       # Handle cases like recitation, other finish reasons
-                      generated_text = f"Response received but no text content. Finish Reason: {candidate.finish_reason}"
-                      if candidate.finish_reason == 'RECITATION':
-                           generated_text += ". (Content may have been blocked due to recitation)"
+                      finish_reason_str = candidate.finish_reason.name if hasattr(candidate.finish_reason, 'name') else str(candidate.finish_reason)
+                      status_msg = f"Response received but no text content. Finish Reason: {finish_reason_str}"
+                      if candidate.finish_reason == generation_types.FinishReason.RECITATION:
+                           status_msg += ". (Content may have been blocked due to recitation)"
+                      print(f"[GeminiNode] {status_msg}")
+                      generated_text = status_msg # Return the status message as output
 
 
             except (ValueError, IndexError, AttributeError) as e:
                  # Catch potential errors accessing response structure
-                 generated_text = f"Error accessing response content: {type(e).__name__}. Raw response: {response}"
+                 error_msg = f"Error accessing response content: {type(e).__name__}. Raw response: {response}"
+                 print(f"[GeminiNode] {error_msg}")
+                 generated_text = f"ERROR: {type(e).__name__} accessing response." # Simplified return
 
 
             return (generated_text,)
 
         except Exception as e:
-            print(f"Gemini API Error: {e}")
             error_details = str(e)
             # Try to extract more specific Google API error messages
             if hasattr(e, 'message'):
                 error_details = e.message
             elif hasattr(e, 'details'):
                  error_details = e.details()
-
-            return (f"ERROR: {error_details}",)
+            error_msg = f"ERROR: Gemini API Error - {error_details}"
+            print(f"[GeminiNode] {error_msg}") # Log the detailed error
+            return (f"ERROR: An API error occurred. Check console logs.",) # Simplified return
 
 # Note: NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS
 # will be handled in __init__.py
