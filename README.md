@@ -46,18 +46,18 @@ Connects to the Google Gemini API to generate text based on a prompt and optiona
 
 **Inputs:**
 
-*   `model` (COMBO): Select the Gemini model to use (e.g., `gemini-1.5-flash-latest`, `gemini-pro-vision`).
+*   `model` (COMBO): Select the Gemini model to use. The list is dynamically fetched from the API if your API key is configured, otherwise defaults are shown.
 *   `prompt` (STRING): The text prompt for the model.
 *   `image_optional` (IMAGE): An optional image input for multimodal prompts.
 *   `temperature` (FLOAT): Controls randomness (0.0-1.0). Lower values are more deterministic.
 *   `top_p` (FLOAT): Nucleus sampling parameter (0.0-1.0).
 *   `top_k` (INT): Top-k sampling parameter.
 *   `max_output_tokens` (INT): Maximum number of tokens to generate.
-*   `safety_harassment` (COMBO): Block threshold for harassment content.
-*   `safety_hate_speech` (COMBO): Block threshold for hate speech content.
-*   `safety_sexually_explicit` (COMBO): Block threshold for sexually explicit content.
-*   `safety_dangerous_content` (COMBO): Block threshold for dangerous content.
-*   `safety_civic_integrity` (COMBO): Block threshold for civic integrity content.
+*   `safety_harassment` (COMBO): Block threshold for harassment content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
+*   `safety_hate_speech` (COMBO): Block threshold for hate speech content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
+*   `safety_sexually_explicit` (COMBO): Block threshold for sexually explicit content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
+*   `safety_dangerous_content` (COMBO): Block threshold for dangerous content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
+*   `safety_civic_integrity` (COMBO): Block threshold for civic integrity content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
 
 **Outputs:**
 
