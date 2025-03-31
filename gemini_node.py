@@ -117,7 +117,7 @@ class GeminiNode:
         default_hate = SAFETY_THRESHOLD_TO_NAME.get("BLOCK_MEDIUM_AND_ABOVE", s.SAFETY_OPTIONS[0])
         default_sexual = SAFETY_THRESHOLD_TO_NAME.get("BLOCK_MEDIUM_AND_ABOVE", s.SAFETY_OPTIONS[0])
         default_dangerous = SAFETY_THRESHOLD_TO_NAME.get("BLOCK_MEDIUM_AND_ABOVE", s.SAFETY_OPTIONS[0])
-        default_civic = SAFETY_THRESHOLD_TO_NAME.get("HARM_BLOCK_THRESHOLD_UNSPECIFIED", s.SAFETY_OPTIONS[0])
+        # Removed civic integrity default calculation
 
         return {
             "required": {
@@ -133,7 +133,7 @@ class GeminiNode:
                 "safety_hate_speech": (s.SAFETY_OPTIONS, {"default": default_hate}),
                 "safety_sexually_explicit": (s.SAFETY_OPTIONS, {"default": default_sexual}),
                 "safety_dangerous_content": (s.SAFETY_OPTIONS, {"default": default_dangerous}),
-                "safety_civic_integrity": (s.SAFETY_OPTIONS, {"default": default_civic}),
+                # Removed civic integrity input
             },
             "optional": {
                  "image_optional": ("IMAGE",),
@@ -147,7 +147,7 @@ class GeminiNode:
 
     def generate(self, model, prompt, temperature, top_p, top_k, max_output_tokens,
                  safety_harassment, safety_hate_speech, safety_sexually_explicit,
-                 safety_dangerous_content, safety_civic_integrity, image_optional=None):
+                 safety_dangerous_content, image_optional=None): # Removed safety_civic_integrity
 
         if not self.api_key:
             # Re-check API key in case it wasn't available during model list fetch
@@ -165,7 +165,7 @@ class GeminiNode:
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": SAFETY_SETTINGS_MAP[safety_hate_speech]},
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": SAFETY_SETTINGS_MAP[safety_sexually_explicit]},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": SAFETY_SETTINGS_MAP[safety_dangerous_content]},
-                {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": SAFETY_SETTINGS_MAP[safety_civic_integrity]},
+                # Removed civic integrity setting
             ]
 
             generation_config = genai.types.GenerationConfig(

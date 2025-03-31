@@ -57,7 +57,6 @@ Connects to the Google Gemini API to generate text based on a prompt and optiona
 *   `safety_hate_speech` (COMBO): Block threshold for hate speech content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
 *   `safety_sexually_explicit` (COMBO): Block threshold for sexually explicit content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
 *   `safety_dangerous_content` (COMBO): Block threshold for dangerous content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
-*   `safety_civic_integrity` (COMBO): Block threshold for civic integrity content (Options: "Default (Unspecified)", "Block Low & Above", "Block Medium & Above", "Block High Only", "Block None").
 
 **Outputs:**
 
