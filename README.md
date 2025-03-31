@@ -16,8 +16,21 @@ This repository contains custom nodes for ComfyUI.
     *   The `.env` file is automatically ignored by git via `.gitignore`.
 3.  **Compile `llama-gemma3-cli.exe` (for Gemma3 Vision Node):**
     *   This node requires the `llama-gemma3-cli.exe` executable from the `llama.cpp` project.
-    *   Follow the instructions at [https://github.com/ggml-org/llama.cpp/discussions/12348](https://github.com/ggml-org/llama.cpp/discussions/12348) to compile `llama.cpp` and specifically the `llama-gemma3-cli` target using CMake.
-    *   Ensure the compiled `.exe` file exists. The node defaults to looking for it at `C:\Users\YOUR_USERNAME\Documents\llama_cpp_build\llama.cpp\build\bin\Debug\llama-gemma3-cli.exe` (adjust the path in `gemma3_vision_node.py` or use the `cli_path_override` input if yours is different).
+    *   Follow the instructions at [https://github.com/ggml-org/llama.cpp/discussions/12348](https://github.com/ggml-org/llama.cpp/discussions/12348) to clone and prepare the `llama.cpp` repository.
+    *   **For GPU acceleration (Recommended):** Compile `llama-gemma3-cli` with CUDA support enabled. Delete any existing `build` directory inside `llama.cpp`, then run CMake configuration with the CUDA flag:
+        ```powershell
+        # Inside the llama.cpp directory
+        cmake -B build -DLLAMA_CUBLAS=ON
+        cmake --build build --target llama-gemma3-cli --config Release
+        ```
+        (This requires the NVIDIA CUDA Toolkit to be installed correctly.)
+    *   **For CPU-only:** Compile without the CUDA flag (this will be much slower):
+        ```powershell
+        # Inside the llama.cpp directory
+        cmake -B build
+        cmake --build build --target llama-gemma3-cli --config Release
+        ```
+    *   Ensure the compiled `llama-gemma3-cli.exe` file exists (likely in `llama.cpp\build\bin\Release`). The node defaults to this path (adjust `DEFAULT_LLAMA_CLI_PATH` in the script or use the `cli_path_override` input if yours is different).
 4.  Install/update the required Python dependencies:
     ```bash
     cd divergent_nodes
@@ -74,13 +87,15 @@ Runs the Gemma 3 vision model using the experimental `llama-gemma3-cli` executab
 
 **Prerequisites:**
 
-*   You **must** compile `llama-gemma3-cli.exe` separately (see step 3 in Installation).
+*   You **must** compile `llama-gemma3-cli.exe` separately, ideally with CUDA support (see step 3 in Installation).
 *   The node needs the correct path to this executable (either the default path hardcoded in the script or provided via `cli_path_override`).
-*   The required models (`gemma-3-27b-it-abliterated-Q4_K_M.gguf` and `mmproj-gemma-3-27b-it-abliterated-f32.gguf`) will be downloaded automatically via `huggingface-hub` on first run to your Hugging Face cache.
+*   The required models for the selected size (12B or 27B) will be downloaded automatically via `huggingface-hub` on first run to your Hugging Face cache.
 
 **Inputs:**
 
+*   `model_size` (COMBO): Select the model size ("12B" or "27B"). Defaults to "12B". This determines which models are downloaded and used.
 *   `prompt` (STRING): The text prompt for the model.
+*   `n_gpu_layers` (INT): Number of model layers to offload to the GPU. Set to 0 for CPU only, or a high number (e.g., 99) to offload as many as possible (requires CUDA-enabled build). Defaults to 99.
 *   `image_optional` (IMAGE): An optional image input. If provided, the node saves it as a temporary PNG file and passes the path to the `llama-gemma3-cli` process.
 *   `temperature` (FLOAT): Controls randomness (0.0-2.0). Defaults to 0.8.
 *   `top_k` (INT): Top-k sampling parameter. Defaults to 40.
