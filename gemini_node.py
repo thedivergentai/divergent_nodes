@@ -3,34 +3,37 @@ import torch
 import numpy as np
 from PIL import Image
 import google.generativeai as genai
-from google.generativeai.types import generation_types # For BlockReason enum
+# Removed incorrect import: from google.generativeai.types import generation_types
 from dotenv import load_dotenv, find_dotenv
 
 # --- Constants ---
 # More comprehensive default list based on documentation (Mar 2025)
-# The dynamic fetch should override this if successful.
+# The dynamic fetch should override this if successful. Sorted newest -> oldest.
 DEFAULT_MODELS = [
-    "models/gemini-1.5-flash-latest",
-    "models/gemini-1.5-pro-latest",
+    # 2.5 Models
+    "models/gemini-2.5-pro-exp-03-25",
+    # 2.0 Models
     "models/gemini-2.0-flash", # latest
     "models/gemini-2.0-flash-lite", # latest
-    "models/gemini-1.5-flash-8b-latest",
-    "models/gemini-1.5-flash", # latest stable
-    "models/gemini-1.5-pro", # latest stable
-    "models/gemini-1.5-flash-8b", # latest stable
-    "models/gemini-1.5-flash-002",
-    "models/gemini-1.5-flash-001",
-    "models/gemini-1.5-pro-002",
-    "models/gemini-1.5-pro-001",
-    "models/gemini-1.5-flash-8b-001",
     "models/gemini-2.0-flash-001",
     "models/gemini-2.0-flash-lite-001",
-    "models/gemini-1.0-pro", # Older stable
-    "models/gemini-pro-vision", # Older vision stable
-    # Experimental (might be fetched dynamically anyway)
-    "models/gemini-2.5-pro-exp-03-25",
     "models/gemini-2.0-flash-exp",
     "models/gemini-2.0-flash-thinking-exp-01-21",
+    # 1.5 Models
+    "models/gemini-1.5-pro-latest",
+    "models/gemini-1.5-flash-latest",
+    "models/gemini-1.5-flash-8b-latest",
+    "models/gemini-1.5-pro", # latest stable
+    "models/gemini-1.5-flash", # latest stable
+    "models/gemini-1.5-flash-8b", # latest stable
+    "models/gemini-1.5-pro-002",
+    "models/gemini-1.5-flash-002",
+    "models/gemini-1.5-pro-001",
+    "models/gemini-1.5-flash-001",
+    "models/gemini-1.5-flash-8b-001",
+    # 1.0 Models
+    "models/gemini-1.0-pro", # Older stable
+    "models/gemini-pro-vision", # Older vision stable
 ]
 
 SAFETY_SETTINGS_MAP = {
@@ -43,12 +46,7 @@ SAFETY_SETTINGS_MAP = {
 # Reverse map for finding default friendly name
 SAFETY_THRESHOLD_TO_NAME = {v: k for k, v in SAFETY_SETTINGS_MAP.items()}
 
-# Map for BlockReason enum to string
-BLOCK_REASON_MAP = {
-    generation_types.BlockReason.BLOCK_REASON_UNSPECIFIED: "UNSPECIFIED",
-    generation_types.BlockReason.SAFETY: "SAFETY",
-    generation_types.BlockReason.OTHER: "OTHER",
-}
+# Removed incorrect BLOCK_REASON_MAP
 
 
 # --- Helper Functions ---
@@ -219,7 +217,13 @@ class GeminiNode:
                  if hasattr(response, 'finish_reason'): # Sometimes finish_reason is on the response itself
                       finish_reason = response.finish_reason
 
-                 block_reason_str = BLOCK_REASON_MAP.get(block_reason_code, f"Unknown ({block_reason_code})")
+                 # Get block reason string name directly from the enum object
+                 block_reason_str = "UNSPECIFIED" # Default fallback
+                 if block_reason_code and hasattr(block_reason_code, 'name'):
+                      block_reason_str = block_reason_code.name
+                 elif block_reason_code: # If it doesn't have .name, use its string representation
+                      block_reason_str = str(block_reason_code)
+
                  error_msg = f"Blocked/Failed: Generation failed. Block Reason: {block_reason_str}, Finish Reason: {finish_reason}"
                  print(f"[GeminiNode] {error_msg}")
                  return (error_msg,)
@@ -229,8 +233,9 @@ class GeminiNode:
             generated_text = ""
             try:
                  candidate = response.candidates[0]
-                 # Check finish reason first
-                 if candidate.finish_reason == generation_types.FinishReason.SAFETY:
+                 # Check finish reason first - Use direct comparison if possible, or string name
+                 finish_reason_val = candidate.finish_reason
+                 if hasattr(finish_reason_val, 'name') and finish_reason_val.name == 'SAFETY':
                       safety_ratings_str = ', '.join([f"{r.category.name}: {r.probability.name}" for r in candidate.safety_ratings])
                       error_msg = f"Blocked: Response stopped due to safety settings. Ratings: [{safety_ratings_str}]"
                       print(f"[GeminiNode] {error_msg}")
@@ -240,9 +245,10 @@ class GeminiNode:
                       print(f"[GeminiNode] Successfully generated text (length: {len(generated_text)}).")
                  else:
                       # Handle cases like recitation, other finish reasons
-                      finish_reason_str = candidate.finish_reason.name if hasattr(candidate.finish_reason, 'name') else str(candidate.finish_reason)
+                      finish_reason_str = finish_reason_val.name if hasattr(finish_reason_val, 'name') else str(finish_reason_val)
                       status_msg = f"Response received but no text content. Finish Reason: {finish_reason_str}"
-                      if candidate.finish_reason == generation_types.FinishReason.RECITATION:
+                      # Check by name if possible
+                      if hasattr(finish_reason_val, 'name') and finish_reason_val.name == 'RECITATION':
                            status_msg += ". (Content may have been blocked due to recitation)"
                       print(f"[GeminiNode] {status_msg}")
                       generated_text = status_msg # Return the status message as output
