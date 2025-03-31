@@ -14,12 +14,16 @@ This repository contains custom nodes for ComfyUI.
     *   Add your Google AI Studio API key to the `.env` file like this: `GEMINI_API_KEY=YOUR_API_KEY_HERE`
     *   See the `.env.example` file for the format.
     *   The `.env` file is automatically ignored by git via `.gitignore`.
-3.  Install/update the required dependencies:
+3.  **Compile `llama-gemma3-cli.exe` (for Gemma3 Vision Node):**
+    *   This node requires the `llama-gemma3-cli.exe` executable from the `llama.cpp` project.
+    *   Follow the instructions at [https://github.com/ggml-org/llama.cpp/discussions/12348](https://github.com/ggml-org/llama.cpp/discussions/12348) to compile `llama.cpp` and specifically the `llama-gemma3-cli` target using CMake.
+    *   Ensure the compiled `.exe` file exists. The node defaults to looking for it at `C:\Users\YOUR_USERNAME\Documents\llama_cpp_build\llama.cpp\build\bin\Debug\llama-gemma3-cli.exe` (adjust the path in `gemma3_vision_node.py` or use the `cli_path_override` input if yours is different).
+4.  Install/update the required Python dependencies:
     ```bash
     cd divergent_nodes
     pip install -r requirements.txt
     ```
-4.  Restart ComfyUI.
+5.  Restart ComfyUI.
 
 The nodes should now be available in their respective categories when you right-click on the ComfyUI canvas.
 
@@ -63,3 +67,28 @@ Connects to the Google Gemini API to generate text based on a prompt and optiona
 *   `text` (STRING): The generated text response from the Gemini API.
 
 **Category:** `Divergent Nodes 👽/Gemini`
+
+### Gemma3 Vision Node
+
+Runs the Gemma 3 vision model using the experimental `llama-gemma3-cli` executable from `llama.cpp`. This allows for text generation based on prompts and optional image analysis.
+
+**Prerequisites:**
+
+*   You **must** compile `llama-gemma3-cli.exe` separately (see step 3 in Installation).
+*   The node needs the correct path to this executable (either the default path hardcoded in the script or provided via `cli_path_override`).
+*   The required models (`gemma-3-27b-it-abliterated-Q4_K_M.gguf` and `mmproj-gemma-3-27b-it-abliterated-f32.gguf`) will be downloaded automatically via `huggingface-hub` on first run to your Hugging Face cache.
+
+**Inputs:**
+
+*   `prompt` (STRING): The text prompt for the model. If you want the CLI to load an image, start the prompt with `/image /path/to/your/image.png\n` followed by your actual prompt.
+*   `image_optional` (IMAGE): **(Currently Ignored)** While this input exists, the underlying `llama-gemma3-cli` requires a file path. The node currently attempts to extract a path from the start of the `prompt` (using `/image ...`). Direct image tensor input is not yet fully supported for this node.
+*   `temperature` (FLOAT): Controls randomness (0.0-2.0). Defaults to 0.8.
+*   `top_k` (INT): Top-k sampling parameter. Defaults to 40.
+*   `top_p` (FLOAT): Nucleus sampling parameter (0.0-1.0). Defaults to 0.95.
+*   `cli_path_override` (STRING): Optional. Provide the full path to your `llama-gemma3-cli.exe` if it's not in the default location specified in the script.
+
+**Outputs:**
+
+*   `text` (STRING): The generated text response from the Gemma 3 model via the CLI. Errors during execution will also be returned in this string.
+
+**Category:** `Divergent Nodes 👽/Gemma`
