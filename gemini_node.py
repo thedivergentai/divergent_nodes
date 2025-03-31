@@ -189,12 +189,9 @@ class GeminiNode:
             pil_image = tensor_to_pil(image_optional)
 
             if pil_image:
-                 # Basic check if model name suggests vision capabilities
-                 # Models like gemini-1.5-pro-latest implicitly support vision
-                 if "vision" not in model_id and "1.5" not in model_id:
-                      return (f"ERROR: Model '{model_id}' might not support image input. Try a vision model like 'gemini-pro-vision' or a 1.5 model.",)
+                 # Removed incorrect check based on model name. Let the API handle validation.
                  content_parts.append(pil_image)
-            elif "vision" in model_id:
+            elif "vision" in model_id: # Keep the warning for vision models without images
                  print(f"Warning: Vision model '{model_id}' selected, but no image provided.")
 
 
