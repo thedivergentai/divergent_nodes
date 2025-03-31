@@ -80,8 +80,8 @@ Runs the Gemma 3 vision model using the experimental `llama-gemma3-cli` executab
 
 **Inputs:**
 
-*   `prompt` (STRING): The text prompt for the model. If you want the CLI to load an image, start the prompt with `/image /path/to/your/image.png\n` followed by your actual prompt.
-*   `image_optional` (IMAGE): **(Currently Ignored)** While this input exists, the underlying `llama-gemma3-cli` requires a file path. The node currently attempts to extract a path from the start of the `prompt` (using `/image ...`). Direct image tensor input is not yet fully supported for this node.
+*   `prompt` (STRING): The text prompt for the model.
+*   `image_optional` (IMAGE): An optional image input. If provided, the node saves it as a temporary PNG file and passes the path to the `llama-gemma3-cli` process.
 *   `temperature` (FLOAT): Controls randomness (0.0-2.0). Defaults to 0.8.
 *   `top_k` (INT): Top-k sampling parameter. Defaults to 40.
 *   `top_p` (FLOAT): Nucleus sampling parameter (0.0-1.0). Defaults to 0.95.

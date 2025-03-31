@@ -11,8 +11,8 @@ from huggingface_hub.errors import HfHubHTTPError # Correct import path based on
 # --- Default Configuration ---
 DEFAULT_LLAMA_CLI_PATH = r"C:\Users\djtri\Documents\llama_cpp_build\llama.cpp\build\bin\Debug\llama-gemma3-cli.exe"
 MODEL_REPO = "bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF"
-TEXT_MODEL_FILENAME = "gemma-3-27b-it-abliterated-Q4_K_M.gguf"
-MMPROJ_MODEL_FILENAME = "mmproj-gemma-3-27b-it-abliterated-f32.gguf"
+TEXT_MODEL_FILENAME = "gemma-3-27b-it-abliterated-Q4_K_M.gguf" # Reverted correction
+MMPROJ_MODEL_FILENAME = "mmproj-gemma-3-27b-it-abliterated-f32.gguf" # Reverted correction
 # --- End Configuration ---
 
 # --- Helper Functions ---
@@ -357,28 +357,29 @@ class Gemma3VisionNode:
     def execute(self, prompt, image_optional=None, temperature=0.8, top_k=40, top_p=0.95, cli_path_override=""):
 
         cli_path = cli_path_override.strip() if cli_path_override.strip() else DEFAULT_LLAMA_CLI_PATH
-        image_file_path = None # llama-gemma3-cli expects a path
+        image_file_path = None # Will hold path to temp image if created
 
         # --- Handle Image Input ---
-        # This node currently passes the *path* to the CLI.
-        # If ComfyUI provides image tensors, we need to save them temporarily.
-        # For simplicity now, we assume the user provides a path via prompt or future input.
-        # Let's check if the prompt itself contains a likely path for the /image command.
-        # A more robust solution would be a dedicated FILE_PATH input type if available,
-        # or saving the tensor to a temp file.
-        image_path_from_prompt = None
+        # If an image tensor is provided, save it to a temporary file
         if image_optional is not None:
-             print("[Gemma3VisionNode] Warning: IMAGE input tensor received, but CLI needs a file path. Saving tensor to temporary file is not yet implemented. Please use the /image command within the prompt or ensure the prompt guides the model to an existing file if needed by the CLI's internal logic.")
-             # TODO: Implement saving tensor to a temp file and pass that path.
-             # pil_image = tensor_to_pil(image_optional)
-             # if pil_image:
-             #     temp_dir = os.path.join(os.path.dirname(__file__), "temp_images")
-             #     os.makedirs(temp_dir, exist_ok=True)
-             #     temp_filename = f"temp_image_{int(time.time())}.png"
-             #     image_file_path = os.path.join(temp_dir, temp_filename)
-             #     pil_image.save(image_file_path)
-             #     print(f"[Gemma3VisionNode] Saved input image tensor to temporary file: {image_file_path}")
-
+             pil_image = tensor_to_pil(image_optional)
+             if pil_image:
+                 try:
+                     # Create a subdirectory for temporary images
+                     temp_dir = os.path.join(os.path.dirname(__file__), "temp_images")
+                     os.makedirs(temp_dir, exist_ok=True)
+                     # Create a unique filename (using timestamp)
+                     temp_filename = f"temp_image_{int(time.time()*1000)}.png"
+                     image_file_path = os.path.join(temp_dir, temp_filename)
+                     # Save the image
+                     pil_image.save(image_file_path, "PNG")
+                     print(f"[Gemma3VisionNode] Saved input image tensor to temporary file: {image_file_path}")
+                 except Exception as e_save:
+                     print(f"[Gemma3VisionNode] Error saving temporary image: {e_save}", file=sys.stderr)
+                     # Proceed without image if saving failed
+                     image_file_path = None
+             else:
+                 print("[Gemma3VisionNode] Warning: Could not convert input tensor to PIL image.", file=sys.stderr)
 
         # --- Download Models ---
         text_model_path, mmproj_model_path = download_model_files_cached()
@@ -386,48 +387,28 @@ class Gemma3VisionNode:
             return ("ERROR: Failed to download necessary model files. Check logs.",)
 
         # --- Run CLI ---
-        # Note: The run_gemma_cli function now handles the image path internally via the /image command simulation
-        # We pass None for image_path here, as the prompt should contain the /image command if needed.
-        # A better approach would be a dedicated image path input.
-        # For now, let's assume the prompt might contain "/image path/to/img.png\nDescribe..."
-        # We need to extract the path if present and pass it separately.
-
-        image_path_for_cli = None
-        clean_prompt = prompt
-        image_match = re.match(r'^\s*/image\s+(.+?)\s*\n(.*)', prompt, re.DOTALL | re.IGNORECASE)
-        if image_match:
-             image_path_for_cli = image_match.group(1).strip()
-             clean_prompt = image_match.group(2).strip()
-             print(f"[Gemma3VisionNode] Extracted image path from prompt: {image_path_for_cli}")
-             if not image_path_for_cli:
-                  print("[Gemma3VisionNode] Warning: /image command found but path seems empty.")
-                  image_path_for_cli = None # Reset if path is empty
-
-        # If we saved a temp image, use that path
-        if image_file_path:
-             image_path_for_cli = image_file_path
-             print(f"[Gemma3VisionNode] Using temp image path: {image_path_for_cli}")
-
-
-        generated_text = run_gemma_cli(
-            cli_path=cli_path,
-            text_model_path=text_model_path,
-            mmproj_model_path=mmproj_model_path,
-            prompt=clean_prompt,
-            image_path=image_path_for_cli, # Pass extracted/temp path
-            temp=temperature,
-            top_k=top_k,
-            top_p=top_p
-        )
-
-        # --- Cleanup Temp File ---
-        if image_file_path and os.path.exists(image_file_path):
-             try:
-                  os.remove(image_file_path)
-                  print(f"[Gemma3VisionNode] Removed temporary image file: {image_file_path}")
-             except Exception as e_rem:
-                  print(f"[Gemma3VisionNode] Warning: Failed to remove temporary image file {image_file_path}: {e_rem}")
-
+        generated_text = "ERROR: Execution did not complete." # Default error
+        try:
+            # Pass the path to the temporary image file (if created) to run_gemma_cli
+            generated_text = run_gemma_cli(
+                cli_path=cli_path,
+                text_model_path=text_model_path,
+                mmproj_model_path=mmproj_model_path,
+                prompt=prompt, # Pass the original prompt
+                image_path=image_file_path, # Pass path to temp file (or None)
+                temp=temperature,
+                top_k=top_k,
+                top_p=top_p
+            )
+        finally:
+            # --- Cleanup Temp File ---
+            # Ensure temporary file is deleted even if run_gemma_cli fails
+            if image_file_path and os.path.exists(image_file_path):
+                 try:
+                      os.remove(image_file_path)
+                      print(f"[Gemma3VisionNode] Removed temporary image file: {image_file_path}")
+                 except Exception as e_rem:
+                      print(f"[Gemma3VisionNode] Warning: Failed to remove temporary image file {image_file_path}: {e_rem}", file=sys.stderr)
 
         return (generated_text,)
 
