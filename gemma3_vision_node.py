@@ -11,8 +11,8 @@ from huggingface_hub.errors import HfHubHTTPError # Correct import path based on
 # --- Default Configuration ---
 DEFAULT_LLAMA_CLI_PATH = r"C:\Users\djtri\Documents\llama_cpp_build\llama.cpp\build\bin\Debug\llama-gemma3-cli.exe"
 MODEL_REPO = "bartowski/mlabonne_gemma-3-27b-it-abliterated-GGUF"
-TEXT_MODEL_FILENAME = "gemma-3-27b-it-abliterated-Q4_K_M.gguf" # Reverted correction
-MMPROJ_MODEL_FILENAME = "mmproj-gemma-3-27b-it-abliterated-f32.gguf" # Reverted correction
+TEXT_MODEL_FILENAME = "mlabonne_gemma-3-27b-it-abliterated-Q4_K_M.gguf" # Add prefix back
+MMPROJ_MODEL_FILENAME = "mmproj-mlabonne_gemma-3-27b-it-abliterated-f32.gguf" # Add prefix back
 # --- End Configuration ---
 
 # --- Helper Functions ---
