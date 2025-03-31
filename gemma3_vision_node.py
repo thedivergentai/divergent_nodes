@@ -5,7 +5,8 @@ import threading
 import queue
 import time
 import re
-from huggingface_hub import hf_hub_download, HfHubHTTPError
+from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import HfHubHTTPError # Correct import path based on docs
 
 # --- Default Configuration ---
 DEFAULT_LLAMA_CLI_PATH = r"C:\Users\djtri\Documents\llama_cpp_build\llama.cpp\build\bin\Debug\llama-gemma3-cli.exe"
