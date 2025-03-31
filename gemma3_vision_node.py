@@ -157,7 +157,7 @@ def run_gemma_cli(cli_path, text_model_path, mmproj_model_path, prompt, image_pa
         print("[Gemma3VisionNode] Waiting for model load...")
         initial_prompt_seen = False
         start_time = time.time()
-        timeout = 60 # Increased timeout for potentially large model load
+        timeout = 180 # Increased timeout for potentially large model load (3 minutes)
 
         while time.time() - start_time < timeout:
             try:
@@ -215,12 +215,13 @@ def run_gemma_cli(cli_path, text_model_path, mmproj_model_path, prompt, image_pa
                  print("[Gemma3VisionNode] Warning: Did not detect prompt after image load command.")
                  # Continue anyway, maybe it worked without explicit prompt
 
-        # --- Send Prompt ---
-        print(f"[Gemma3VisionNode] Sending prompt...")
-        prompt_command = f"{prompt}\n"
-        process.stdin.write(prompt_command)
+        # --- Send Prompt (with formatting) ---
+        print(f"[Gemma3VisionNode] Sending formatted prompt...")
+        # Apply the required chat template
+        formatted_prompt = f"<bos><start_of_turn>user\n{prompt}<end_of_turn>\n<start_of_turn>model\n"
+        process.stdin.write(formatted_prompt)
         process.stdin.flush()
-        full_output += f"[SENT] {prompt_command}"
+        full_output += f"[SENT] {formatted_prompt}" # Log formatted prompt
 
         # --- Read Response ---
         print("[Gemma3VisionNode] Reading response...")
@@ -230,10 +231,13 @@ def run_gemma_cli(cli_path, text_model_path, mmproj_model_path, prompt, image_pa
         response_timeout = 120 # Timeout for generation
 
         # Pattern to detect the start of the actual response after the prompt echo
-        prompt_echo_pattern = re.compile(r'^\s*>\s*' + re.escape(prompt.strip()) + r'\s*$')
+        # The CLI might not echo the full formatted prompt, adjust pattern if needed.
+        # Let's assume it echoes the user part or just starts generating.
+        # We need to skip the initial "> " prompt after sending our formatted prompt.
+        prompt_echo_pattern = re.compile(r'^\s*>\s*$') # Look for the prompt after our input
         # More robust check for the end prompt ">" possibly preceded by whitespace/newlines
-        end_prompt_pattern = re.compile(r'\n?>\s*$')
-        in_response_section = False
+        end_prompt_pattern = re.compile(r'\n?>\s*$') # Check for prompt at end of line
+        in_response_section = False # Flag to indicate we are reading the actual model response
 
         while time.time() - start_time < response_timeout:
             try:
@@ -242,24 +246,26 @@ def run_gemma_cli(cli_path, text_model_path, mmproj_model_path, prompt, image_pa
                 full_output += line
                 # print(f"[CLI_stdout_resp] {line.strip()}") # Verbose
 
-                # Check if we've passed the prompt echo
-                if not in_response_section and prompt_echo_pattern.match(line):
-                     in_response_section = True
-                     continue # Skip the echo line itself
+                # Wait until we see the prompt that follows our input before collecting response
+                if not in_response_section:
+                    if prompt_echo_pattern.match(line):
+                        in_response_section = True
+                        # print("[Gemma3VisionNode] Detected prompt after input, starting response capture.")
+                    continue # Skip lines until we are in the response section
 
-                # Once past the echo, start collecting response lines
-                if in_response_section:
-                    # Check if this line contains the end prompt
-                    if end_prompt_pattern.search(line):
-                         # Capture content before the prompt if any
-                         response_part = end_prompt_pattern.sub('', line)
-                         if response_part:
-                              response_lines.append(response_part)
-                         response_prompt_seen = True
-                         print("[Gemma3VisionNode] End prompt detected.")
-                         break
-                    else:
-                         response_lines.append(line)
+                # Once in the response section, collect lines until the next prompt
+                # Check if this line *ends* with the prompt pattern
+                if end_prompt_pattern.search(line):
+                     # Capture content before the prompt if any
+                     response_part = end_prompt_pattern.sub('', line)
+                     if response_part:
+                          response_lines.append(response_part)
+                     response_prompt_seen = True
+                     print("[Gemma3VisionNode] End prompt detected.")
+                     break
+                else:
+                     # Append the whole line if it's part of the response
+                     response_lines.append(line)
 
             except queue.Empty:
                 if process.poll() is not None:
