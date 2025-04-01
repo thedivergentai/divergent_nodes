@@ -268,13 +268,18 @@ class KoboldCppNode:
         # --- Map quant_kv display name back to integer ---
         quant_kv_int = self.QUANT_KV_MAP.get(quant_kv, 0)
 
+        # --- Strip quotes from paths ---
+        koboldcpp_path_cleaned = koboldcpp_path.strip().strip('"')
+        model_path_cleaned = model_path.strip().strip('"')
+        mmproj_path_cleaned = mmproj_path.strip().strip('"') if mmproj_path else None
+
         # --- Run CLI ---
         try:
             generated_text = run_koboldcpp_cli(
-                koboldcpp_path=koboldcpp_path.strip(),
-                model_path=model_path.strip(),
+                koboldcpp_path=koboldcpp_path_cleaned,
+                model_path=model_path_cleaned,
                 prompt=prompt,
-                mmproj_path=mmproj_path.strip() if mmproj_path else None,
+                mmproj_path=mmproj_path_cleaned,
                 gpu_acceleration=gpu_acceleration,
                 n_gpu_layers=n_gpu_layers,
                 context_size=context_size,
