@@ -66,7 +66,7 @@ Connects to the Google Gemini API to generate text based on a prompt and optiona
 
 ### KoboldCpp Node
 
-Runs models using the KoboldCpp executable (`koboldcpp_cu12.exe` or similar). This node launches KoboldCpp with setup parameters via the command line and passes generation parameters (including prompt and optional image data) via a JSON payload on standard input.
+Runs models using the KoboldCpp executable (`koboldcpp_cu12.exe` or similar). This node employs a hybrid approach: it launches a KoboldCpp instance in the background with specified setup parameters (and caches this instance for efficiency) and then sends generation requests to that instance's API.
 
 **Prerequisites:**
 
@@ -74,13 +74,22 @@ Runs models using the KoboldCpp executable (`koboldcpp_cu12.exe` or similar). Th
 *   The node needs the correct path to this executable (either the default path hardcoded in the script or provided via `koboldcpp_path`).
 *   You need the `.gguf` model file(s) you intend to use.
 *   For image input, you need the corresponding multimodal projector (`.gguf`) file specified in `mmproj_path`.
+*   The `requests` Python library must be installed (`pip install -r requirements.txt`).
 
-**How it Works:**
-The node starts the KoboldCpp process with configuration flags (like model path, GPU layers, context size). It then sends a JSON object containing the prompt, generation settings (temperature, max length, etc.), and optionally a Base64 encoded image to the process's standard input. KoboldCpp processes this input and writes the generated text to its standard output, which the node captures and returns.
+**How it Works (Hybrid Launch + API + Caching):**
+
+1.  **Launch/Cache:** When executed, the node checks if a KoboldCpp instance with the *exact same setup parameters* (model, GPU layers, context size, etc.) is already running in its cache.
+    *   **Cache Hit:** If a matching, responsive instance is found, it reuses that instance.
+    *   **Cache Miss:** If no matching instance is running, it terminates any *other* cached instance (to conserve resources) and launches a *new* KoboldCpp process in the background using the current setup parameters. It finds a free port for the API and waits for the API to become ready. The new process is then added to the cache.
+2.  **API Call:** The node prepares a JSON payload containing the generation parameters (prompt, image, temperature, max length, etc.).
+3.  **Image Handling:** If an image is provided via `image_optional`, it's converted to a Base64 string and included in the JSON payload under the `"images"` key. The prompt text is automatically formatted to indicate an image is attached.
+4.  **Request:** The JSON payload is sent via HTTP POST to the `/api/v1/generate` endpoint of the (cached or newly launched) KoboldCpp instance.
+5.  **Response:** The node receives the JSON response from the API, extracts the generated text, and returns it.
+6.  **Cleanup:** When ComfyUI exits normally, a cleanup function attempts to terminate all KoboldCpp processes launched and cached by this node. **Note:** If ComfyUI crashes or is force-killed, cached processes might remain running and require manual termination.
 
 **Inputs:**
 
-*   **Setup Arguments (Passed via CLI):**
+*   **Setup Arguments (Used for Launching/Caching):**
     *   `koboldcpp_path` (STRING): Full path to your `koboldcpp_cu12.exe` (or equivalent). Defaults to a common location but should be verified.
     *   `model_path` (STRING): Full path to the primary `.gguf` model file.
     *   `gpu_acceleration` (COMBO): Select the GPU backend ("None", "CuBLAS", "CLBlast", "Vulkan"). Defaults to "CuBLAS". Note: CLBlast defaults to platform/device 0 0; use `extra_cli_args` for others.
@@ -92,9 +101,9 @@ The node starts the KoboldCpp process with configuration flags (like model path,
     *   `use_mlock` (BOOLEAN): Enable locking model in RAM. Defaults to False.
     *   `flash_attention` (BOOLEAN): Enable Flash Attention (requires compatible GPU/backend, usually CuBLAS). Defaults to False.
     *   `quant_kv` (COMBO): KV cache quantization level ("0: f16", "1: q8", "2: q4"). Defaults to "0: f16". Often requires Flash Attention.
-    *   `extra_cli_args` (STRING): Optional. Add any other valid KoboldCpp *setup* command-line flags here (e.g., `--useclblast 1 0`, `--nommq`). **Do not** include generation flags like `--temp` or `--prompt` here.
-*   **Generation Arguments (Passed via JSON on stdin):**
-    *   `prompt` (STRING): The text prompt for the model. If an image is provided, the node automatically formats this like `\n(Attached Image)\n\n### Instruction:\n{your_prompt}\n### Response:\n`.
+    *   `extra_cli_args` (STRING): Optional. Add any other valid KoboldCpp *setup* command-line flags here (e.g., `--useclblast 1 0`, `--nommq`). **Do not** include generation flags like `--temp` or API-related flags like `--port`.
+*   **Generation Arguments (Passed via API JSON):**
+    *   `prompt` (STRING): The text prompt for the model.
     *   `max_length` (INT): Maximum number of tokens to generate. Defaults to 512.
     *   `temperature` (FLOAT): Controls randomness. Defaults to 0.7.
     *   `top_p` (FLOAT): Nucleus sampling parameter. Defaults to 0.92.

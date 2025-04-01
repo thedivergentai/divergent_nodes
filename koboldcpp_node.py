@@ -1,26 +1,24 @@
 import subprocess
 import os
 import sys
-import tempfile
 import time
-import shlex # For parsing extra args safely
-import json # Added
-import base64 # Added
-import io # Added
-import re # Added for output parsing
-from dotenv import load_dotenv # Added
-import pathlib # Added to find .env relative
-
-# --- Load Environment Variables ---
-# Find the .env file relative to this script's directory
-script_dir = pathlib.Path(__file__).parent.resolve()
-dotenv_path = script_dir / '.env'
-load_dotenv(dotenv_path=dotenv_path)
+import shlex
+import json
+import base64
+import io
+import socket
+import threading
+import atexit
+import re
+import requests # Added
 
 # --- Default Configuration ---
-# Attempt to find KoboldCpp in common locations or user's path
-# User should ideally provide this path if it's not standard.
-DEFAULT_KOBOLDCPP_PATH = r"C:\Users\djtri\Documents\KoboldCpp\koboldcpp_cu12.exe" # Fallback default
+DEFAULT_KOBOLDCPP_PATH = r"C:\Users\djtri\Documents\KoboldCpp\koboldcpp_cu12.exe" # Default, user can override
+
+# --- Process Cache ---
+# Cache format: { cache_key: {"process": process_object, "port": port_number} }
+koboldcpp_processes_cache = {}
+cache_lock = threading.Lock() # To prevent race conditions when accessing the cache
 
 # --- Helper Functions ---
 import torch
@@ -32,21 +30,39 @@ def tensor_to_pil(tensor):
     if tensor is None:
         return None
     images = []
+    # Ensure tensor is on CPU and detach from graph
+    tensor = tensor.detach().cpu()
     for i in range(tensor.shape[0]):
-        img_np = tensor[i].cpu().numpy()
+        img_np = tensor[i].numpy()
+        # Handle different dtypes and ranges
         if img_np.dtype == np.float32 or img_np.dtype == np.float64:
-             img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
+            # Assuming range [0, 1] for float, scale to [0, 255]
+            img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
         elif img_np.dtype != np.uint8:
-             print(f"[KoboldCppNode] Warning: Unexpected tensor dtype {img_np.dtype}, attempting conversion.")
-             img_np = img_np.astype(np.uint8)
+            print(f"[KoboldCppNode] Warning: Unexpected tensor dtype {img_np.dtype}, attempting conversion.")
+            # Attempt conversion, assuming data range is appropriate or clipping handles it
+            try:
+                img_np = img_np.astype(np.uint8)
+            except ValueError as e:
+                 print(f"[KoboldCppNode] Error converting tensor dtype {img_np.dtype} to uint8: {e}", file=sys.stderr)
+                 continue # Skip this image if conversion fails
+
+        # Ensure it's 3D (H, W, C) or 2D (H, W)
+        if img_np.ndim == 3 and img_np.shape[2] == 1: # Grayscale image with channel dim
+            img_np = img_np.squeeze(axis=2) # Convert to 2D grayscale
+        elif img_np.ndim != 2 and (img_np.ndim != 3 or img_np.shape[2] not in [3, 4]):
+             print(f"[KoboldCppNode] Warning: Unexpected tensor shape {img_np.shape}, skipping image.", file=sys.stderr)
+             continue
+
         try:
             pil_image = Image.fromarray(img_np)
             images.append(pil_image)
         except Exception as e:
-            print(f"[KoboldCppNode] Error converting tensor slice to PIL Image: {e}")
-            return None
+            print(f"[KoboldCppNode] Error converting tensor slice to PIL Image: {e}", file=sys.stderr)
+            return None # Return None if any conversion fails
     # Return the first image in the batch
     return images[0] if images else None
+
 
 def pil_to_base64(pil_image, format="jpeg"):
     """Converts a PIL Image to a Base64 encoded string."""
@@ -54,13 +70,12 @@ def pil_to_base64(pil_image, format="jpeg"):
         return None
     try:
         buffer = io.BytesIO()
-        # Convert RGBA to RGB if necessary for JPEG
-        if pil_image.mode == 'RGBA' and format.lower() == 'jpeg':
+        img_format = format.upper()
+        # Convert RGBA/P to RGB if necessary for JPEG
+        if pil_image.mode in ['RGBA', 'P'] and img_format == 'JPEG':
             pil_image = pil_image.convert('RGB')
-        elif pil_image.mode == 'P' and format.lower() == 'jpeg': # Handle palette images for JPEG
-             pil_image = pil_image.convert('RGB')
 
-        pil_image.save(buffer, format=format.upper())
+        pil_image.save(buffer, format=img_format)
         img_bytes = buffer.getvalue()
         base64_string = base64.b64encode(img_bytes).decode('utf-8')
         return base64_string
@@ -68,35 +83,106 @@ def pil_to_base64(pil_image, format="jpeg"):
         print(f"[KoboldCppNode] Error converting PIL image to Base64: {e}", file=sys.stderr)
         return None
 
-# --- Subprocess Interaction Logic ---
+def find_free_port():
+    """Finds an available network port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0)) # Bind to port 0 to let the OS choose an available port
+        return s.getsockname()[1] # Return the chosen port
 
-def run_koboldcpp_cli(
+def check_api_ready(port, timeout=60):
+    """Checks if the KoboldCpp API is responding."""
+    start_time = time.time()
+    url = f"http://localhost:{port}/api/extra/version" # Use version endpoint for check
+    while time.time() - start_time < timeout:
+        try:
+            response = requests.get(url, timeout=1) # Short timeout for individual check
+            if response.status_code == 200:
+                print(f"[KoboldCppNode] API on port {port} is ready.")
+                return True
+        except requests.exceptions.ConnectionError:
+            pass # Ignore connection errors while waiting
+        except requests.exceptions.Timeout:
+            print(f"[KoboldCppNode] API check timed out on port {port}.") # Log timeouts during check
+        except Exception as e:
+             print(f"[KoboldCppNode] Error checking API readiness on port {port}: {e}", file=sys.stderr)
+             # Don't immediately fail on other errors, maybe transient
+        time.sleep(0.5) # Wait before retrying
+    print(f"[KoboldCppNode] API on port {port} did not become ready within {timeout} seconds.", file=sys.stderr)
+    return False
+
+def terminate_process(process):
+    """Attempts to terminate a subprocess gracefully, then kills it."""
+    if process and process.poll() is None: # Check if process exists and is running
+        print(f"[KoboldCppNode] Terminating KoboldCpp process (PID: {process.pid})...")
+        try:
+            # Try graceful termination first (SIGTERM on Unix, equivalent on Windows)
+            process.terminate()
+            process.wait(timeout=5) # Wait a bit for graceful exit
+            print(f"[KoboldCppNode] Process {process.pid} terminated gracefully.")
+        except (subprocess.TimeoutExpired, PermissionError, OSError) as e:
+            print(f"[KoboldCppNode] Graceful termination failed for PID {process.pid} ({e}), killing...", file=sys.stderr)
+            try:
+                process.kill()
+                process.wait(timeout=2) # Wait briefly for kill
+                print(f"[KoboldCppNode] Process {process.pid} killed.")
+            except Exception as kill_e:
+                print(f"[KoboldCppNode] Error killing process {process.pid}: {kill_e}", file=sys.stderr)
+        except Exception as term_e:
+             print(f"[KoboldCppNode] Error during termination of process {process.pid}: {term_e}", file=sys.stderr)
+             # Attempt kill as fallback
+             try:
+                  if process.poll() is None:
+                       process.kill()
+                       print(f"[KoboldCppNode] Process {process.pid} killed as fallback.")
+             except Exception as kill_e_fb:
+                  print(f"[KoboldCppNode] Error killing process {process.pid} as fallback: {kill_e_fb}", file=sys.stderr)
+
+
+def cleanup_koboldcpp_processes():
+    """Terminates all cached KoboldCpp processes."""
+    print("[KoboldCppNode] Cleaning up cached KoboldCpp processes...")
+    with cache_lock:
+        keys_to_remove = list(koboldcpp_processes_cache.keys()) # Avoid modifying dict while iterating
+        for key in keys_to_remove:
+            cache_entry = koboldcpp_processes_cache.pop(key, None)
+            if cache_entry and "process" in cache_entry:
+                terminate_process(cache_entry["process"])
+    print("[KoboldCppNode] Cleanup finished.")
+
+# Register the cleanup function to run on exit
+atexit.register(cleanup_koboldcpp_processes)
+
+# --- Main Execution Logic ---
+
+def launch_and_call_api(
+    # --- Setup Args (CLI) ---
     koboldcpp_path,
     model_path,
-    # --- Generation Params (passed via JSON) ---
-    prompt_text,
+    mmproj_path=None,
+    gpu_acceleration="None",
+    n_gpu_layers=0,
+    context_size=4096,
+    use_mmap=False,
+    use_mlock=False,
+    flash_attention=False,
+    quant_kv=0,
+    threads=None,
+    extra_cli_args="",
+    # --- Generation Args (API JSON) ---
+    prompt_text="",
     base64_image=None,
     max_length=512,
     temperature=0.7,
     top_p=0.92,
     top_k=0,
     rep_pen=1.1,
-    stop_sequence=None, # Optional list of stop sequences
-    # --- Setup Params (passed via CLI) ---
-    mmproj_path=None,
-    gpu_acceleration="None", # Options: "None", "CuBLAS", "CLBlast", "Vulkan"
-    n_gpu_layers=0,
-    context_size=4096,
-    use_mmap=False,
-    use_mlock=False,
-    flash_attention=False,
-    quant_kv=0, # 0=f16, 1=q8, 2=q4
-    threads=None, # None = auto
-    extra_cli_args=""
+    stop_sequence=None,
+    # --- Control ---
+    force_new_instance=False # Added for potential future use? Or just rely on cache logic.
 ):
     """
-    Runs koboldcpp_cu12.exe, passing setup args via CLI and generation args via JSON on stdin.
-    Captures output from stdout.
+    Manages launching/caching KoboldCpp instances and calling the API.
+    Handles the hybrid launch + API approach with caching.
     """
     # --- Validate Paths ---
     if not os.path.exists(koboldcpp_path):
@@ -106,67 +192,141 @@ def run_koboldcpp_cli(
     if mmproj_path and not os.path.exists(mmproj_path):
         return f"ERROR: MMProj file not found at: {mmproj_path}"
 
-    # --- Construct CLI Command (Setup Arguments Only) ---
-    command = [
-        koboldcpp_path,
-        "--model", model_path,
-        "--contextsize", str(context_size),
-        "--gpulayers", str(n_gpu_layers),
-        "--quiet" # Add quiet to minimize stdout noise from KoboldCpp itself
-        # Removed --prompt, --promptlimit, --temp, --top-p, --top-k as they go in JSON
-    ]
+    # --- Create Cache Key from Setup Parameters ---
+    # Use a tuple of sorted items for consistent hashing
+    setup_params = {
+        "koboldcpp_path": koboldcpp_path,
+        "model_path": model_path,
+        "mmproj_path": mmproj_path,
+        "gpu_acceleration": gpu_acceleration,
+        "n_gpu_layers": n_gpu_layers,
+        "context_size": context_size,
+        "use_mmap": use_mmap,
+        "use_mlock": use_mlock,
+        "flash_attention": flash_attention,
+        "quant_kv": quant_kv,
+        "threads": threads,
+        "extra_cli_args": extra_cli_args,
+    }
+    cache_key = tuple(sorted(setup_params.items()))
 
-    # Add optional flags based on inputs
-    # Add optional setup flags based on inputs
-    if mmproj_path:
-        command.extend(["--mmproj", mmproj_path])
+    process_to_use = None
+    port_to_use = None
+    error_message = None
 
-     # GPU Acceleration
-    # (GPU Acceleration, mmap, mlock, flash_attention, quant_kv, threads logic remains the same)
-    if gpu_acceleration == "CuBLAS":
-        command.append("--usecublas")
-    elif gpu_acceleration == "CLBlast":
-        command.extend(["--useclblast", "0", "0"])
-        print("[KoboldCppNode] Warning: Using default CLBlast platform/device 0 0. Use 'extra_cli_args' if you need different IDs (e.g., '--useclblast 1 0').")
-    elif gpu_acceleration == "Vulkan":
-        command.append("--usevulkan")
+    with cache_lock:
+        cached_entry = koboldcpp_processes_cache.get(cache_key)
 
-    if use_mmap:
-        command.append("--usemmap")
-    if use_mlock:
-        command.append("--usemlock")
-    if flash_attention:
-        if gpu_acceleration != "CuBLAS":
-             print("[KoboldCppNode] Warning: Flash Attention typically requires CuBLAS.")
-        command.append("--flashattention")
-    if quant_kv > 0:
-        if not flash_attention:
-             print("[KoboldCppNode] Warning: Quantized KV Cache (--quantkv) usually requires Flash Attention (--flashattention) for full effect.")
-        command.extend(["--quantkv", str(quant_kv)])
+        # --- Cache Hit Logic ---
+        if cached_entry:
+            print(f"[KoboldCppNode] Found cached process for setup: {cache_key}")
+            process = cached_entry["process"]
+            port = cached_entry["port"]
+            # Check if process is still alive and API is responsive
+            if process.poll() is None:
+                if check_api_ready(port, timeout=5): # Quick check for running instance
+                    print(f"[KoboldCppNode] Reusing running KoboldCpp instance on port {port}.")
+                    process_to_use = process
+                    port_to_use = port
+                else:
+                    print(f"[KoboldCppNode] Cached process on port {port} found but API not responding. Terminating.", file=sys.stderr)
+                    terminate_process(process)
+                    koboldcpp_processes_cache.pop(cache_key, None) # Remove dead entry
+            else:
+                print(f"[KoboldCppNode] Cached process for setup {cache_key} has terminated. Removing from cache.", file=sys.stderr)
+                koboldcpp_processes_cache.pop(cache_key, None) # Remove dead entry
 
-    if threads is not None and threads > 0:
-        command.extend(["--threads", str(threads)])
+        # --- Cache Miss Logic (or if cached process was dead) ---
+        if not process_to_use:
+            print(f"[KoboldCppNode] No active cached process found for setup: {cache_key}. Launching new instance.")
+            # Terminate any OTHER existing cached process before launching a new one
+            # This assumes we only want one instance running via this node at a time
+            current_keys = list(koboldcpp_processes_cache.keys())
+            for key in current_keys:
+                 if key != cache_key: # Don't terminate self if we just removed it
+                      entry_to_terminate = koboldcpp_processes_cache.pop(key, None)
+                      if entry_to_terminate:
+                           print(f"[KoboldCppNode] Terminating other cached instance (Setup: {key})")
+                           terminate_process(entry_to_terminate["process"])
 
-     # Add extra setup arguments, parsed safely
-    # (Parsing extra_cli_args remains the same)
-    if extra_cli_args:
-        try:
-            extra_args_list = shlex.split(extra_cli_args)
-            command.extend(extra_args_list)
-        except Exception as e:
-            return f"ERROR: Could not parse Extra CLI Arguments: {e}\nArguments provided: {extra_cli_args}"
+            # Find a free port
+            try:
+                port_to_use = find_free_port()
+                print(f"[KoboldCppNode] Found free port: {port_to_use}")
+            except Exception as e:
+                return f"ERROR: Could not find a free port: {e}"
 
-    # --- Construct JSON Payload (Generation Arguments) ---
-    # Format prompt based on image presence
+            # Construct CLI command for launching the server
+            command = [
+                koboldcpp_path,
+                "--model", model_path,
+                "--port", str(port_to_use),
+                "--contextsize", str(context_size),
+                "--gpulayers", str(n_gpu_layers),
+                "--quiet" # Keep it quiet
+            ]
+            # Add optional setup flags
+            if mmproj_path: command.extend(["--mmproj", mmproj_path])
+            if gpu_acceleration == "CuBLAS": command.append("--usecublas")
+            elif gpu_acceleration == "CLBlast": command.extend(["--useclblast", "0", "0"]) # Still default, user needs extra_cli_args
+            elif gpu_acceleration == "Vulkan": command.append("--usevulkan")
+            if use_mmap: command.append("--usemmap")
+            if use_mlock: command.append("--usemlock")
+            if flash_attention: command.append("--flashattention")
+            if quant_kv > 0: command.extend(["--quantkv", str(quant_kv)])
+            if threads is not None and threads > 0: command.extend(["--threads", str(threads)])
+            if extra_cli_args:
+                try:
+                    command.extend(shlex.split(extra_cli_args))
+                except Exception as e:
+                    return f"ERROR: Could not parse Extra CLI Arguments: {e}"
+
+            # Launch the process
+            print(f"[KoboldCppNode] Launching KoboldCpp: {' '.join(command)}")
+            try:
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                # Use Popen to run in background
+                process_to_use = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE, # Capture stdout/stderr for debugging if needed
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=creationflags,
+                    shell=False
+                )
+                print(f"[KoboldCppNode] KoboldCpp process launched (PID: {process_to_use.pid}) on port {port_to_use}.")
+                # Store in cache immediately
+                koboldcpp_processes_cache[cache_key] = {"process": process_to_use, "port": port_to_use}
+            except Exception as e:
+                return f"ERROR: Failed to launch KoboldCpp process: {e}"
+
+            # Wait for the API to become ready
+            if not check_api_ready(port_to_use, timeout=120): # Increased timeout for model loading
+                error_message = f"ERROR: Launched KoboldCpp on port {port_to_use} but API did not become ready."
+                # Read stderr from the failed process for more info
+                try:
+                     stdout_launch, stderr_launch = process_to_use.communicate(timeout=1)
+                     if stderr_launch:
+                          error_message += f"\nProcess Stderr:\n{stderr_launch.strip()}"
+                     if stdout_launch:
+                          error_message += f"\nProcess Stdout:\n{stdout_launch.strip()}"
+                except Exception as comm_e:
+                     error_message += f"\n(Could not get process output: {comm_e})"
+
+                terminate_process(process_to_use)
+                # Remove from cache if launch failed
+                koboldcpp_processes_cache.pop(cache_key, None)
+                return error_message
+
+    # --- Prepare API Request Payload ---
     final_prompt = ""
     if base64_image:
-        # Using a format similar to the user's log example for multimodal prompts
-        # Note: The exact placeholder like "(Attached Image)" might vary or be unnecessary
-        # if KoboldCpp implicitly knows an image is attached via the "images" key.
-        # Let's try a common format first.
+        # Format adapted from user log / common practice
         final_prompt = f"\n(Attached Image)\n\n### Instruction:\n{prompt_text}\n### Response:\n"
     else:
-        final_prompt = prompt_text # Or adjust if a specific format is needed for text-only
+        final_prompt = prompt_text # Assuming direct prompt is fine for text-only
 
     payload = {
         "prompt": final_prompt,
@@ -175,117 +335,59 @@ def run_koboldcpp_cli(
         "top_p": top_p,
         "top_k": top_k,
         "rep_pen": rep_pen,
-        "quiet": True, # Ensure quiet mode in payload too
-        # Add other relevant payload keys based on Kobold API / user log
-        "use_default_badwordsids": False, # From user log
-        "bypass_eos": False, # Assuming default, might need input
-        # "sampler_order": [6, 0, 1, 3, 4, 2, 5], # Can be added if needed
+        # Map other relevant params from Kobold API docs / user log if needed
+        # Example params from user log (some might not be needed/settable per-request):
+        "n": 1,
+        # "max_context_length": context_size, # Usually set on launch
+        "top_a": 0, # Add if input needed
+        "typical": 1, # Add if input needed
+        "tfs": 1, # Add if input needed
+        # "rep_pen_range": 360, # Add if input needed
+        # "rep_pen_slope": 0.7, # Add if input needed
+        # "sampler_order": [6, 0, 1, 3, 4, 2, 5], # Add if input needed
+        "use_default_badwordsids": False,
+        # "quiet": True, # Already passed on launch
     }
-
     if base64_image:
         payload["images"] = [base64_image]
-
     if stop_sequence:
         payload["stop_sequence"] = stop_sequence
 
+    # --- Call KoboldCpp API ---
+    api_url = f"http://localhost:{port_to_use}/api/v1/generate" # Standard endpoint
+    print(f"[KoboldCppNode] Sending API request to {api_url}")
+    generated_text = f"ERROR: API call failed to {api_url}."
     try:
-        json_payload = json.dumps(payload)
-    except Exception as e:
-        return f"ERROR: Failed to serialize JSON payload: {e}"
+        response = requests.post(api_url, json=payload, timeout=300) # 5 min timeout for generation
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
-    # --- Execute Process ---
-    print(f"[KoboldCppNode] Running command: {' '.join(command)}")
-    print(f"[KoboldCppNode] Sending JSON payload via stdin: {json_payload[:200]}...") # Log truncated payload
-
-    stdout_data = ""
-    stderr_data = ""
-    process = None
-    try:
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            creationflags=creationflags,
-            shell=False
-        )
-
-        # Send JSON payload to stdin and capture output
-        stdout_data, stderr_data = process.communicate(input=json_payload, timeout=300) # 5 min timeout
-
-        if process.returncode != 0:
-            print(f"[KoboldCppNode] KoboldCpp process exited with code {process.returncode}", file=sys.stderr)
-            error_message = f"ERROR: KoboldCpp process failed (code {process.returncode}).\n"
-            if stderr_data:
-                error_message += f"Stderr:\n{stderr_data.strip()}\n"
-            if stdout_data:
-                 error_message += f"Stdout (may contain partial output or errors):\n{stdout_data.strip()}"
-            return error_message.strip()
-
-        # --- Parse Output ---
-        # The actual response might be mixed with other logs in stdout, even with --quiet.
-        # Based on the user log, the response appears after the timing info.
-        # Let's try finding the response after the last timing line or similar marker.
-        # A simple approach first: assume the last non-empty lines are the response.
-        lines = stdout_data.strip().splitlines()
-        response_content = ""
-        # Find the line with timing info like "[HH:MM:SS] CtxLimit:..."
-        timing_line_index = -1
-        for i in reversed(range(len(lines))):
-             # Updated regex to be more robust against potential variations
-             if re.search(r"\[\d{1,2}:\d{2}:\d{2}\]\s+(CtxLimit:|Processing Prompt|Generating)", lines[i]):
-                  timing_line_index = i
-                  break
-
-        if timing_line_index != -1 and timing_line_index + 1 < len(lines):
-             # Assume response starts on the next line after timing info
-             response_content = "\n".join(lines[timing_line_index + 1:]).strip()
-        elif lines:
-             # Fallback: If timing line not found, maybe return the last line? Or all non-empty lines?
-             # Let's try returning the last non-empty line as a guess.
-             for line in reversed(lines):
-                  if line.strip():
-                       response_content = line.strip()
-                       print("[KoboldCppNode] Warning: Could not find timing marker in output, returning last non-empty line as response.")
-                       break
-             if not response_content: # If all lines were empty after stripping
-                  response_content = stdout_data.strip() # Return everything as fallback
-                  print("[KoboldCppNode] Warning: Could not parse response effectively, returning full stdout.")
+        response_json = response.json()
+        # Extract text - structure based on Kobold API standard
+        results = response_json.get("results")
+        if results and isinstance(results, list) and len(results) > 0:
+            generated_text = results[0].get("text", "ERROR: 'text' field not found in API response results.")
         else:
-             # If stdout is empty or only whitespace
-             response_content = ""
+            generated_text = f"ERROR: 'results' field not found or invalid in API response: {response_json}"
 
-        if not response_content and stderr_data:
-             print("[KoboldCppNode] No response content found in stdout, checking stderr.", file=sys.stderr)
-             return f"ERROR: No response generated. Stderr:\n{stderr_data.strip()}"
-        elif not response_content:
-             return "ERROR: No response generated (stdout was empty)."
-
-        return response_content
-
-    except FileNotFoundError:
-        return f"ERROR: KoboldCpp executable not found at the specified path: {koboldcpp_path}"
-    except subprocess.TimeoutExpired:
-        if process: process.kill()
-        stdout_data, stderr_data = process.communicate() # Get any remaining output
-        error_message = "ERROR: KoboldCpp process timed out after 300 seconds.\n"
-        if stderr_data: error_message += f"Stderr:\n{stderr_data.strip()}\n"
-        if stdout_data: error_message += f"Stdout:\n{stdout_data.strip()}"
-        return error_message.strip()
+    except requests.exceptions.Timeout:
+        generated_text = f"ERROR: API request timed out after 300 seconds to {api_url}."
+        # Consider terminating the process if the API call times out? Maybe it hung.
+        # terminate_process(process_to_use)
+        # koboldcpp_processes_cache.pop(cache_key, None)
+    except requests.exceptions.RequestException as e:
+        generated_text = f"ERROR: API request failed: {e}"
+        # If connection failed, the process might be dead. Check and remove from cache.
+        if isinstance(e, requests.exceptions.ConnectionError):
+             with cache_lock:
+                  cached_entry = koboldcpp_processes_cache.get(cache_key)
+                  if cached_entry and cached_entry["process"].poll() is not None:
+                       print("[KoboldCppNode] API connection failed, removing dead process from cache.", file=sys.stderr)
+                       koboldcpp_processes_cache.pop(cache_key, None)
+                       terminate_process(cached_entry["process"]) # Ensure cleanup
     except Exception as e:
-        if process: process.kill() # Ensure process is killed on other errors
-        error_message = f"ERROR during execution: {type(e).__name__}: {e}\n"
-        # Attempt to get stderr if available
-        try:
-             if stderr_data: error_message += f"Stderr:\n{stderr_data.strip()}\n"
-             if stdout_data: error_message += f"Stdout:\n{stdout_data.strip()}"
-        except: pass # Ignore errors during error reporting itself
-        print(f"[KoboldCppNode] {error_message.strip()}", file=sys.stderr)
-        return error_message.strip()
+         generated_text = f"ERROR: An unexpected error occurred during API call or response parsing: {e}"
+
+    return generated_text
 
 
 # --- ComfyUI Node Definition ---
@@ -293,65 +395,52 @@ def run_koboldcpp_cli(
 class KoboldCppNode:
     """
     ComfyUI node to run models using KoboldCpp (koboldcpp_cu12.exe).
-    Passes setup args via CLI and generation args via JSON on stdin.
-    Supports text and image input (via Base64 in JSON).
+    Launches KoboldCpp instance with specified setup parameters (cached),
+    and sends generation requests via its API. Supports image input.
     """
-    # (Keep GPU_ACCELERATION_MODES, QUANT_KV_OPTIONS, QUANT_KV_MAP)
     GPU_ACCELERATION_MODES = ["None", "CuBLAS", "CLBlast", "Vulkan"]
     QUANT_KV_OPTIONS = ["0: f16", "1: q8", "2: q4"] # Display names
     QUANT_KV_MAP = {"0: f16": 0, "1: q8": 1, "2: q4": 2} # Map back to int
 
     def __init__(self):
-        pass
+        pass # No instance state needed, cache is global
 
     @classmethod
     def INPUT_TYPES(s):
-        # Get KoboldCpp path from .env or use the hardcoded default
-        kobold_path_from_env = os.getenv("KOBOLDCPP_PATH")
-        # Use env path if set, otherwise use the hardcoded default
-        effective_default_path = kobold_path_from_env if kobold_path_from_env else DEFAULT_KOBOLDCPP_PATH
-
-        # Check if the effective default path exists and warn if not
-        default_path_exists = os.path.exists(effective_default_path)
-        # Set the input default to the found path (env or hardcoded) or empty string if neither exists
-        kobold_path_input_default = effective_default_path if default_path_exists else ""
-
-        # Print warning only if a path was configured (env or hardcoded) but not found
-        if not default_path_exists and effective_default_path:
-             print(f"[KoboldCppNode] Warning: Default KoboldCpp path not found ('{effective_default_path}'). Please ensure KOBOLDCPP_PATH in .env is correct or provide the path manually in the node input.")
-        # Print a different warning if no path was configured at all
-        elif not effective_default_path:
-             print(f"[KoboldCppNode] Warning: KoboldCpp path not set in .env and hardcoded default is missing. Please provide the path manually in the node input.")
-
+        default_path_exists = os.path.exists(DEFAULT_KOBOLDCPP_PATH)
+        kobold_path_default = DEFAULT_KOBOLDCPP_PATH if default_path_exists else ""
+        if not default_path_exists:
+             print(f"[KoboldCppNode] Warning: Default KoboldCpp path not found: {DEFAULT_KOBOLDCPP_PATH}. Please provide the correct path.")
 
         return {
             "required": {
-                # --- Setup Args (CLI) ---
-                "koboldcpp_path": ("STRING", {"multiline": False, "default": kobold_path_input_default}), # Use effective default
+                # --- Setup Args (Used for Launching/Caching) ---
+                "koboldcpp_path": ("STRING", {"multiline": False, "default": kobold_path_default}),
                 "model_path": ("STRING", {"multiline": False, "default": "path/to/your/model.gguf"}),
                 "gpu_acceleration": (s.GPU_ACCELERATION_MODES, {"default": "CuBLAS"}),
-                "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 1000, "step": 1}), # -1 for auto
+                "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 1000, "step": 1}),
                 "context_size": ("INT", {"default": 4096, "min": 256, "max": 131072, "step": 256}),
-                # --- Generation Args (JSON via stdin) ---
-                "prompt": ("STRING", {"multiline": True, "default": "Describe the image."}), # Renamed from prompt_text for clarity
-                "max_length": ("INT", {"default": 512, "min": 1, "max": 16384, "step": 1}), # Renamed from max_output_tokens
+                # --- Generation Args (Passed via API JSON) ---
+                "prompt": ("STRING", {"multiline": True, "default": "Describe the image."}),
+                "max_length": ("INT", {"default": 512, "min": 1, "max": 16384, "step": 1}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "top_p": ("FLOAT", {"default": 0.92, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "top_k": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1}), # 0 = disabled
-                "rep_pen": ("FLOAT", {"default": 1.1, "min": 0.0, "max": 3.0, "step": 0.01}), # Added rep_pen input
+                "top_k": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1}),
+                "rep_pen": ("FLOAT", {"default": 1.1, "min": 0.0, "max": 3.0, "step": 0.01}),
             },
             "optional": {
-                 # --- Optional Setup Args (CLI) ---
+                 # --- Optional Setup Args (Used for Launching/Caching) ---
                 "mmproj_path": ("STRING", {"multiline": False, "default": ""}),
-                "threads": ("INT", {"default": 0, "min": 0, "max": 128, "step": 1}), # 0 = auto
+                "threads": ("INT", {"default": 0, "min": 0, "max": 128, "step": 1}),
                 "use_mmap": ("BOOLEAN", {"default": True}),
                 "use_mlock": ("BOOLEAN", {"default": False}),
                 "flash_attention": ("BOOLEAN", {"default": False}),
                 "quant_kv": (s.QUANT_KV_OPTIONS, {"default": "0: f16"}),
                 "extra_cli_args": ("STRING", {"multiline": False, "default": ""}),
-                 # --- Optional Generation Args (JSON via stdin) ---
-                "image_optional": ("IMAGE",), # Now functional
-                "stop_sequence": ("STRING", {"multiline": True, "default": ""}), # Input for stop sequences (comma/newline separated)
+                 # --- Optional Generation Args (Passed via API JSON) ---
+                "image_optional": ("IMAGE",),
+                "stop_sequence": ("STRING", {"multiline": True, "default": ""}),
+                # Add other API params as optional inputs if desired (e.g., top_a, typical)
             }
         }
 
@@ -361,23 +450,22 @@ class KoboldCppNode:
     CATEGORY = "Divergent Nodes 👽/KoboldCpp"
 
     def execute(self, koboldcpp_path, model_path, prompt, gpu_acceleration, n_gpu_layers,
-                context_size, max_length, temperature, top_p, top_k, rep_pen, # Added rep_pen
+                context_size, max_length, temperature, top_p, top_k, rep_pen,
                 mmproj_path="", image_optional=None, threads=0, use_mmap=True, use_mlock=False,
                 flash_attention=False, quant_kv="0: f16", extra_cli_args="", stop_sequence=""):
 
         base64_image_string = None
-        generated_text = "ERROR: Node execution did not complete."
+        generated_text = "ERROR: Node execution failed."
 
         # --- Handle Image Input (Convert to Base64) ---
         if image_optional is not None:
              pil_image = tensor_to_pil(image_optional)
              if pil_image:
-                 base64_image_string = pil_to_base64(pil_image, format="jpeg") # Use JPEG for potentially smaller size
+                 base64_image_string = pil_to_base64(pil_image, format="jpeg")
                  if not base64_image_string:
                       return ("ERROR: Failed to convert input image to Base64.",)
              else:
                  print("[KoboldCppNode] Warning: Could not convert input tensor to PIL image.", file=sys.stderr)
-                 # Proceed without image if conversion failed but tensor was provided
 
         # --- Map quant_kv display name back to integer ---
         quant_kv_int = self.QUANT_KV_MAP.get(quant_kv, 0)
@@ -385,21 +473,17 @@ class KoboldCppNode:
         # --- Prepare Stop Sequences ---
         stop_sequence_list = None
         if stop_sequence and stop_sequence.strip():
-             # Split by newline or comma, trim whitespace
-             # Added re import at the top
              stop_sequence_list = [seq.strip() for seq in re.split(r'[,\n]', stop_sequence) if seq.strip()]
-             if not stop_sequence_list: # Handle case where input is just whitespace/commas
-                  stop_sequence_list = None
+             if not stop_sequence_list: stop_sequence_list = None
 
         # --- Strip quotes from paths ---
         koboldcpp_path_cleaned = koboldcpp_path.strip().strip('"')
         model_path_cleaned = model_path.strip().strip('"')
         mmproj_path_cleaned = mmproj_path.strip().strip('"') if mmproj_path else None
 
-        # --- Run CLI with JSON payload ---
-        # No temp file needed for image path anymore
-        generated_text = run_koboldcpp_cli(
-            # Setup Args (CLI)
+        # --- Call the main logic function ---
+        generated_text = launch_and_call_api(
+            # Setup Args
             koboldcpp_path=koboldcpp_path_cleaned,
             model_path=model_path_cleaned,
             mmproj_path=mmproj_path_cleaned,
@@ -412,7 +496,7 @@ class KoboldCppNode:
             quant_kv=quant_kv_int,
             threads=threads if threads > 0 else None,
             extra_cli_args=extra_cli_args,
-            # Generation Args (JSON via stdin)
+            # Generation Args
             prompt_text=prompt,
             base64_image=base64_image_string,
             max_length=max_length,
