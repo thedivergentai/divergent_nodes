@@ -7,11 +7,20 @@ import shlex # For parsing extra args safely
 import json # Added
 import base64 # Added
 import io # Added
+import re # Added for output parsing
+from dotenv import load_dotenv # Added
+import pathlib # Added to find .env relative
+
+# --- Load Environment Variables ---
+# Find the .env file relative to this script's directory
+script_dir = pathlib.Path(__file__).parent.resolve()
+dotenv_path = script_dir / '.env'
+load_dotenv(dotenv_path=dotenv_path)
 
 # --- Default Configuration ---
 # Attempt to find KoboldCpp in common locations or user's path
 # User should ideally provide this path if it's not standard.
-DEFAULT_KOBOLDCPP_PATH = r"C:\Users\djtri\Documents\KoboldCpp\koboldcpp_cu12.exe" # Default, user can override
+DEFAULT_KOBOLDCPP_PATH = r"C:\Users\djtri\Documents\KoboldCpp\koboldcpp_cu12.exe" # Fallback default
 
 # --- Helper Functions ---
 import torch
@@ -227,7 +236,8 @@ def run_koboldcpp_cli(
         # Find the line with timing info like "[HH:MM:SS] CtxLimit:..."
         timing_line_index = -1
         for i in reversed(range(len(lines))):
-             if re.search(r"\[\d{2}:\d{2}:\d{2}\]\s+CtxLimit:", lines[i]):
+             # Updated regex to be more robust against potential variations
+             if re.search(r"\[\d{1,2}:\d{2}:\d{2}\]\s+(CtxLimit:|Processing Prompt|Generating)", lines[i]):
                   timing_line_index = i
                   break
 
@@ -296,16 +306,28 @@ class KoboldCppNode:
 
     @classmethod
     def INPUT_TYPES(s):
-        # (Keep default path checking logic)
-        default_path_exists = os.path.exists(DEFAULT_KOBOLDCPP_PATH)
-        kobold_path_default = DEFAULT_KOBOLDCPP_PATH if default_path_exists else ""
-        if not default_path_exists:
-             print(f"[KoboldCppNode] Warning: Default KoboldCpp path not found: {DEFAULT_KOBOLDCPP_PATH}. Please provide the correct path in the node input.")
+        # Get KoboldCpp path from .env or use the hardcoded default
+        kobold_path_from_env = os.getenv("KOBOLDCPP_PATH")
+        # Use env path if set, otherwise use the hardcoded default
+        effective_default_path = kobold_path_from_env if kobold_path_from_env else DEFAULT_KOBOLDCPP_PATH
+
+        # Check if the effective default path exists and warn if not
+        default_path_exists = os.path.exists(effective_default_path)
+        # Set the input default to the found path (env or hardcoded) or empty string if neither exists
+        kobold_path_input_default = effective_default_path if default_path_exists else ""
+
+        # Print warning only if a path was configured (env or hardcoded) but not found
+        if not default_path_exists and effective_default_path:
+             print(f"[KoboldCppNode] Warning: Default KoboldCpp path not found ('{effective_default_path}'). Please ensure KOBOLDCPP_PATH in .env is correct or provide the path manually in the node input.")
+        # Print a different warning if no path was configured at all
+        elif not effective_default_path:
+             print(f"[KoboldCppNode] Warning: KoboldCpp path not set in .env and hardcoded default is missing. Please provide the path manually in the node input.")
+
 
         return {
             "required": {
                 # --- Setup Args (CLI) ---
-                "koboldcpp_path": ("STRING", {"multiline": False, "default": kobold_path_default}),
+                "koboldcpp_path": ("STRING", {"multiline": False, "default": kobold_path_input_default}), # Use effective default
                 "model_path": ("STRING", {"multiline": False, "default": "path/to/your/model.gguf"}),
                 "gpu_acceleration": (s.GPU_ACCELERATION_MODES, {"default": "CuBLAS"}),
                 "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 1000, "step": 1}), # -1 for auto
@@ -364,6 +386,7 @@ class KoboldCppNode:
         stop_sequence_list = None
         if stop_sequence and stop_sequence.strip():
              # Split by newline or comma, trim whitespace
+             # Added re import at the top
              stop_sequence_list = [seq.strip() for seq in re.split(r'[,\n]', stop_sequence) if seq.strip()]
              if not stop_sequence_list: # Handle case where input is just whitespace/commas
                   stop_sequence_list = None
