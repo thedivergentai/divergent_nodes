@@ -107,3 +107,42 @@ Runs the Gemma 3 vision model using the experimental `llama-gemma3-cli` executab
 *   `text` (STRING): The generated text response from the Gemma 3 model via the CLI. Errors during execution will also be returned in this string.
 
 **Category:** `Divergent Nodes 👽/Gemma`
+
+### KoboldCpp Node
+
+Runs models using the KoboldCpp executable (`koboldcpp_cu12.exe` or similar). This node uses the `--prompt` flag for non-interactive text generation based on a prompt and various KoboldCpp settings.
+
+**Prerequisites:**
+
+*   You **must** have a working KoboldCpp executable (e.g., `koboldcpp_cu12.exe`). Download it from the [KoboldCpp releases page](https://github.com/LostRuins/koboldcpp/releases/latest).
+*   The node needs the correct path to this executable (either the default path hardcoded in the script or provided via `koboldcpp_path`).
+*   You need the `.gguf` model file(s) you intend to use.
+
+**Important Note on Image Input:** This node currently uses KoboldCpp's `--prompt` mode, which does **not** support direct image file input via command-line arguments in the same way the interactive mode or API does. Providing an image to the `image_optional` input will result in an error message from the node. Text generation using multimodal models (with `--mmproj`) is supported, but the *input* must be text-only for now.
+
+**Inputs:**
+
+*   `koboldcpp_path` (STRING): Full path to your `koboldcpp_cu12.exe` (or equivalent). Defaults to a common location but should be verified.
+*   `model_path` (STRING): Full path to the primary `.gguf` model file.
+*   `prompt` (STRING): The text prompt for the model.
+*   `gpu_acceleration` (COMBO): Select the GPU backend ("None", "CuBLAS", "CLBlast", "Vulkan"). Defaults to "CuBLAS". Note: CLBlast defaults to platform/device 0 0; use `extra_cli_args` for others.
+*   `n_gpu_layers` (INT): Number of model layers to offload to the GPU (-1 for auto, 0 for CPU only). Defaults to -1.
+*   `context_size` (INT): Maximum context size for the model. Defaults to 4096.
+*   `max_output_tokens` (INT): Maximum number of tokens to generate (maps to `--promptlimit`). Defaults to 512.
+*   `temperature` (FLOAT): Controls randomness. Defaults to 0.7.
+*   `top_p` (FLOAT): Nucleus sampling parameter. Defaults to 0.92.
+*   `top_k` (INT): Top-k sampling parameter (0 to disable). Defaults to 0.
+*   `mmproj_path` (STRING): Optional. Full path to the multimodal projector (`.gguf`) file if using a vision model.
+*   `image_optional` (IMAGE): Optional image input. **Currently non-functional** (see note above).
+*   `threads` (INT): Number of CPU threads to use (0 for auto). Defaults to 0.
+*   `use_mmap` (BOOLEAN): Enable memory-mapped file loading. Defaults to True.
+*   `use_mlock` (BOOLEAN): Enable locking model in RAM. Defaults to False.
+*   `flash_attention` (BOOLEAN): Enable Flash Attention (requires compatible GPU/backend, usually CuBLAS). Defaults to False.
+*   `quant_kv` (COMBO): KV cache quantization level ("0: f16", "1: q8", "2: q4"). Defaults to "0: f16". Often requires Flash Attention.
+*   `extra_cli_args` (STRING): Optional. Add any other valid KoboldCpp command-line flags here (e.g., `--useclblast 1 0`, `--nommq`).
+
+**Outputs:**
+
+*   `text` (STRING): The generated text response from KoboldCpp. Errors during execution will also be returned in this string.
+
+**Category:** `Divergent Nodes 👽/KoboldCpp`
