@@ -64,56 +64,89 @@ Connects to the Google Gemini API to generate text based on a prompt and optiona
 
 **Category:** `Divergent Nodes 👽/Gemini`
 
-### KoboldCpp Node
+### KoboldCpp Launcher (Advanced)
 
-Runs models using the KoboldCpp executable (`koboldcpp_cu12.exe` or similar). This node employs a hybrid approach: it launches a KoboldCpp instance in the background with specified setup parameters (and caches this instance for efficiency) and then sends generation requests to that instance's API.
+Launches and manages a KoboldCpp instance (`koboldcpp_cu12.exe` or similar) in the background for text generation. This node provides full control over the KoboldCpp launch parameters and uses its API for generation requests. It caches running instances based on setup parameters for efficiency.
 
 **Prerequisites:**
 
 *   You **must** have a working KoboldCpp executable (e.g., `koboldcpp_cu12.exe`). Download it from the [KoboldCpp releases page](https://github.com/LostRuins/koboldcpp/releases/latest).
-*   The node needs the correct path to this executable (either the default path hardcoded in the script or provided via `koboldcpp_path`).
+*   The node needs the correct path to this executable via the `koboldcpp_path` input.
 *   You need the `.gguf` model file(s) you intend to use.
 *   For image input, you need the corresponding multimodal projector (`.gguf`) file specified in `mmproj_path`.
 *   The `requests` Python library must be installed (`pip install -r requirements.txt`).
 
 **How it Works (Hybrid Launch + API + Caching):**
 
-1.  **Launch/Cache:** When executed, the node checks if a KoboldCpp instance with the *exact same setup parameters* (model, GPU layers, context size, etc.) is already running in its cache.
-    *   **Cache Hit:** If a matching, responsive instance is found, it reuses that instance.
-    *   **Cache Miss:** If no matching instance is running, it terminates any *other* cached instance (to conserve resources) and launches a *new* KoboldCpp process in the background using the current setup parameters. It finds a free port for the API and waits for the API to become ready. The new process is then added to the cache.
-2.  **API Call:** The node prepares a JSON payload containing the generation parameters (prompt, image, temperature, max length, etc.).
-3.  **Image Handling:** If an image is provided via `image_optional`, it's converted to a Base64 string and included in the JSON payload under the `"images"` key. The prompt text is automatically formatted to indicate an image is attached.
-4.  **Request:** The JSON payload is sent via HTTP POST to the `/api/v1/generate` endpoint of the (cached or newly launched) KoboldCpp instance.
-5.  **Response:** The node receives the JSON response from the API, extracts the generated text, and returns it.
-6.  **Cleanup:** When ComfyUI exits normally, a cleanup function attempts to terminate all KoboldCpp processes launched and cached by this node. **Note:** If ComfyUI crashes or is force-killed, cached processes might remain running and require manual termination.
+1.  **Launch/Cache:** When executed, the node checks its internal cache for a running KoboldCpp instance matching the exact *Setup Arguments* provided.
+    *   **Cache Hit:** If found and responsive, it reuses the existing instance.
+    *   **Cache Miss:** If not found, it terminates any *other* cached instance and launches a new KoboldCpp process using the provided *Setup Arguments*. It finds a free port, waits for the API to be ready, and caches the new process.
+2.  **API Call:** It prepares a JSON payload with the *Generation Arguments* (prompt, image, sampling settings).
+3.  **Image Handling:** If an `image_optional` is provided, it's converted to Base64 and included in the payload. The prompt is formatted to indicate an image is present.
+4.  **Request/Response:** Sends the payload to the `/api/v1/generate` endpoint of the managed KoboldCpp instance and returns the extracted text response.
+5.  **Cleanup:** Attempts to terminate cached processes when ComfyUI exits normally (may fail on crash/force-kill).
 
 **Inputs:**
 
 *   **Setup Arguments (Used for Launching/Caching):**
-    *   `koboldcpp_path` (STRING): Full path to your `koboldcpp_cu12.exe` (or equivalent). Defaults to a common location but should be verified.
+    *   `koboldcpp_path` (STRING): Full path to your `koboldcpp_cu12.exe`.
     *   `model_path` (STRING): Full path to the primary `.gguf` model file.
-    *   `gpu_acceleration` (COMBO): Select the GPU backend ("None", "CuBLAS", "CLBlast", "Vulkan"). Defaults to "CuBLAS". Note: CLBlast defaults to platform/device 0 0; use `extra_cli_args` for others.
-    *   `n_gpu_layers` (INT): Number of model layers to offload to the GPU (-1 for auto, 0 for CPU only). Defaults to -1.
-    *   `context_size` (INT): Maximum context size for the model. Defaults to 4096.
-    *   `mmproj_path` (STRING): Optional. Full path to the multimodal projector (`.gguf`) file if using a vision model. **Required for image input.**
-    *   `threads` (INT): Number of CPU threads to use (0 for auto). Defaults to 0.
-    *   `use_mmap` (BOOLEAN): Enable memory-mapped file loading. Defaults to True.
-    *   `use_mlock` (BOOLEAN): Enable locking model in RAM. Defaults to False.
-    *   `flash_attention` (BOOLEAN): Enable Flash Attention (requires compatible GPU/backend, usually CuBLAS). Defaults to False.
-    *   `quant_kv` (COMBO): KV cache quantization level ("0: f16", "1: q8", "2: q4"). Defaults to "0: f16". Often requires Flash Attention.
-    *   `extra_cli_args` (STRING): Optional. Add any other valid KoboldCpp *setup* command-line flags here (e.g., `--useclblast 1 0`, `--nommq`). **Do not** include generation flags like `--temp` or API-related flags like `--port`.
+    *   `gpu_acceleration` (COMBO): GPU backend ("None", "CuBLAS", "CLBlast", "Vulkan"). Default: "CuBLAS".
+    *   `n_gpu_layers` (INT): Layers to offload (-1=auto). Default: -1.
+    *   `context_size` (INT): Model context size. Default: 4096.
+    *   `mmproj_path` (STRING): Optional path to `.gguf` multimodal projector. **Required for image input.**
+    *   `threads` (INT): CPU threads (0=auto). Default: 0.
+    *   `use_mmap` (BOOLEAN): Enable memory mapping. Default: True.
+    *   `use_mlock` (BOOLEAN): Lock model in RAM. Default: False.
+    *   `flash_attention` (BOOLEAN): Enable Flash Attention. Default: False.
+    *   `quant_kv` (COMBO): KV cache quantization ("0: f16", "1: q8", "2: q4"). Default: "0: f16".
+    *   `extra_cli_args` (STRING): Optional *setup* flags (e.g., `--useclblast 1 0`). **Do not** include generation or API flags.
 *   **Generation Arguments (Passed via API JSON):**
-    *   `prompt` (STRING): The text prompt for the model.
-    *   `max_length` (INT): Maximum number of tokens to generate. Defaults to 512.
-    *   `temperature` (FLOAT): Controls randomness. Defaults to 0.7.
-    *   `top_p` (FLOAT): Nucleus sampling parameter. Defaults to 0.92.
-    *   `top_k` (INT): Top-k sampling parameter (0 to disable). Defaults to 0.
-    *   `rep_pen` (FLOAT): Repetition penalty. Defaults to 1.1.
-    *   `image_optional` (IMAGE): Optional image input. If provided, it's converted to Base64 and sent in the JSON payload. Requires `mmproj_path` to be set correctly.
-    *   `stop_sequence` (STRING): Optional. Comma or newline-separated list of sequences to stop generation at.
+    *   `prompt` (STRING): The text prompt.
+    *   `max_length` (INT): Max tokens to generate. Default: 512.
+    *   `temperature` (FLOAT): Sampling temperature. Default: 0.7.
+    *   `top_p` (FLOAT): Nucleus sampling p. Default: 0.92.
+    *   `top_k` (INT): Top-k sampling (0=disable). Default: 0.
+    *   `rep_pen` (FLOAT): Repetition penalty. Default: 1.1.
+    *   `image_optional` (IMAGE): Optional image input. Requires `mmproj_path`.
+    *   `stop_sequence` (STRING): Optional comma/newline separated stop sequences.
 
 **Outputs:**
 
-*   `text` (STRING): The generated text response from KoboldCpp. Errors during execution will also be returned in this string.
+*   `text` (STRING): The generated text response from KoboldCpp. Errors are returned here too.
+
+**Category:** `Divergent Nodes 👽/KoboldCpp`
+
+### KoboldCpp API Connector (Basic)
+
+Connects to an **already running** KoboldCpp instance via its API to perform text generation. This node **does not** launch or manage the KoboldCpp process itself.
+
+**Prerequisites:**
+
+*   You must have a KoboldCpp instance running separately, accessible via the network.
+*   The `requests` Python library must be installed (`pip install -r requirements.txt`).
+
+**How it Works:**
+
+1.  **Check Connection:** Verifies it can reach the API at the specified `api_url`.
+2.  **Prepare Payload:** Creates a JSON payload with the prompt, image (if provided, converted to Base64), and generation settings.
+3.  **API Call:** Sends the payload via HTTP POST to the `/api/v1/generate` endpoint of the running KoboldCpp instance.
+4.  **Response:** Parses the API response and returns the generated text.
+
+**Inputs:**
+
+*   `api_url` (STRING): The base URL of the running KoboldCpp instance (e.g., `http://localhost:5001`). Default: `http://localhost:5001`.
+*   `prompt` (STRING): The text prompt.
+*   `max_length` (INT): Max tokens to generate. Default: 512.
+*   `temperature` (FLOAT): Sampling temperature. Default: 0.7.
+*   `top_p` (FLOAT): Nucleus sampling p. Default: 0.92.
+*   `top_k` (INT): Top-k sampling (0=disable). Default: 0.
+*   `rep_pen` (FLOAT): Repetition penalty. Default: 1.1.
+*   `image_optional` (IMAGE): Optional image input. Requires the connected KoboldCpp instance to have loaded the appropriate model and mmproj file.
+*   `stop_sequence` (STRING): Optional comma/newline separated stop sequences.
+
+**Outputs:**
+
+*   `text` (STRING): The generated text response from the KoboldCpp API. Errors are returned here too.
 
 **Category:** `Divergent Nodes 👽/KoboldCpp`

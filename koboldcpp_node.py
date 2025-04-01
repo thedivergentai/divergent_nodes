@@ -392,9 +392,9 @@ def launch_and_call_api(
 
 # --- ComfyUI Node Definition ---
 
-class KoboldCppNode:
+class KoboldCppLauncherNode: # Renamed from KoboldCppNode
     """
-    ComfyUI node to run models using KoboldCpp (koboldcpp_cu12.exe).
+    ComfyUI node to LAUNCH and run models using KoboldCpp (koboldcpp_cu12.exe).
     Launches KoboldCpp instance with specified setup parameters (cached),
     and sends generation requests via its API. Supports image input.
     """
@@ -447,10 +447,10 @@ class KoboldCppNode:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("text",)
     FUNCTION = "execute"
-    CATEGORY = "Divergent Nodes 👽/KoboldCpp"
+    CATEGORY = "Divergent Nodes 👽/KoboldCpp" # Keep category, maybe add subcategory later if needed
 
     def execute(self, koboldcpp_path, model_path, prompt, gpu_acceleration, n_gpu_layers,
-                context_size, max_length, temperature, top_p, top_k, rep_pen,
+                context_size, max_length, temperature, top_p, top_k, rep_pen, # Added rep_pen
                 mmproj_path="", image_optional=None, threads=0, use_mmap=True, use_mlock=False,
                 flash_attention=False, quant_kv="0: f16", extra_cli_args="", stop_sequence=""):
 
@@ -510,3 +510,120 @@ class KoboldCppNode:
         return (generated_text,)
 
 # NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS are defined in __init__.py
+
+
+# --- Basic API Connector Node ---
+
+class KoboldCppApiNode:
+    """
+    ComfyUI node to connect to an ALREADY RUNNING KoboldCpp instance via its API.
+    Does NOT launch KoboldCpp itself. Supports image input via API.
+    """
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "api_url": ("STRING", {"multiline": False, "default": "http://localhost:5001"}),
+                # --- Generation Args (Passed via API JSON) ---
+                "prompt": ("STRING", {"multiline": True, "default": "Describe the image."}),
+                "max_length": ("INT", {"default": 512, "min": 1, "max": 16384, "step": 1}),
+                "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.01}),
+                "top_p": ("FLOAT", {"default": 0.92, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "top_k": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1}),
+                "rep_pen": ("FLOAT", {"default": 1.1, "min": 0.0, "max": 3.0, "step": 0.01}),
+            },
+            "optional": {
+                 # --- Optional Generation Args (Passed via API JSON) ---
+                "image_optional": ("IMAGE",),
+                "stop_sequence": ("STRING", {"multiline": True, "default": ""}),
+                # Add other relevant API params as optional inputs if desired
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("text",)
+    FUNCTION = "execute"
+    CATEGORY = "Divergent Nodes 👽/KoboldCpp"
+
+    def execute(self, api_url, prompt, max_length, temperature, top_p, top_k, rep_pen,
+                image_optional=None, stop_sequence=""):
+
+        base64_image_string = None
+        generated_text = "ERROR: Node execution failed."
+        api_url_cleaned = api_url.strip().rstrip('/') # Clean up URL
+
+        # --- Check API Readiness ---
+        version_url = f"{api_url_cleaned}/api/extra/version"
+        try:
+            response = requests.get(version_url, timeout=3) # Quick timeout for check
+            response.raise_for_status()
+            print(f"[KoboldCppApiNode] Successfully connected to KoboldCpp API at {api_url_cleaned}.")
+        except requests.exceptions.RequestException as e:
+            return (f"ERROR: Failed to connect to KoboldCpp API at {api_url_cleaned}. Is it running? Details: {e}",)
+        except Exception as e:
+             return (f"ERROR: Unexpected error checking API status at {api_url_cleaned}: {e}",)
+
+
+        # --- Handle Image Input (Convert to Base64) ---
+        if image_optional is not None:
+             pil_image = tensor_to_pil(image_optional)
+             if pil_image:
+                 base64_image_string = pil_to_base64(pil_image, format="jpeg")
+                 if not base64_image_string:
+                      return ("ERROR: Failed to convert input image to Base64.",)
+             else:
+                 print("[KoboldCppApiNode] Warning: Could not convert input tensor to PIL image.", file=sys.stderr)
+
+        # --- Prepare Stop Sequences ---
+        stop_sequence_list = None
+        if stop_sequence and stop_sequence.strip():
+             stop_sequence_list = [seq.strip() for seq in re.split(r'[,\n]', stop_sequence) if seq.strip()]
+             if not stop_sequence_list: stop_sequence_list = None
+
+        # --- Prepare API Request Payload ---
+        final_prompt = ""
+        if base64_image_string:
+            final_prompt = f"\n(Attached Image)\n\n### Instruction:\n{prompt}\n### Response:\n"
+        else:
+            final_prompt = prompt
+
+        payload = {
+            "prompt": final_prompt,
+            "max_length": max_length,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "rep_pen": rep_pen,
+            "use_default_badwordsids": False,
+            # Add other params if needed
+        }
+        if base64_image_string:
+            payload["images"] = [base64_image_string]
+        if stop_sequence_list:
+            payload["stop_sequence"] = stop_sequence_list
+
+        # --- Call KoboldCpp API ---
+        generate_url = f"{api_url_cleaned}/api/v1/generate"
+        print(f"[KoboldCppApiNode] Sending API request to {generate_url}")
+        try:
+            response = requests.post(generate_url, json=payload, timeout=300) # 5 min timeout
+            response.raise_for_status()
+
+            response_json = response.json()
+            results = response_json.get("results")
+            if results and isinstance(results, list) and len(results) > 0:
+                generated_text = results[0].get("text", "ERROR: 'text' field not found in API response results.")
+            else:
+                generated_text = f"ERROR: 'results' field not found or invalid in API response: {response_json}"
+
+        except requests.exceptions.Timeout:
+            generated_text = f"ERROR: API request timed out after 300 seconds to {generate_url}."
+        except requests.exceptions.RequestException as e:
+            generated_text = f"ERROR: API request failed: {e}"
+        except Exception as e:
+             generated_text = f"ERROR: An unexpected error occurred during API call or response parsing: {e}"
+
+        return (generated_text,)
