@@ -12,6 +12,25 @@ import atexit
 import re
 import requests # Added
 
+# --- Safe Print Function ---
+def safe_print(text, file=None):
+    """Prints text safely to the console, replacing unsupported characters."""
+    output_stream = file or sys.stdout
+    try:
+        # Attempt direct printing first (might work if console supports UTF-8)
+        print(text, file=output_stream)
+    except UnicodeEncodeError:
+        try:
+            # Fallback: Encode using detected encoding, replacing errors
+            encoding = output_stream.encoding or 'utf-8' # Default to utf-8 if encoding not detected
+            encoded_text = str(text).encode(encoding, errors='replace').decode(encoding)
+            print(encoded_text, file=output_stream)
+        except Exception as e:
+            # Very basic fallback if encoding fails entirely
+            print(f"[SafePrint Error] Could not print message: {e}", file=sys.stderr) # Use raw print for this specific error
+            # Optionally print a very simplified version if possible
+            # print(repr(text), file=output_stream) # Raw representation
+
 # --- Default Configuration ---
 DEFAULT_KOBOLDCPP_PATH = r"C:\Users\djtri\Documents\KoboldCpp\koboldcpp_cu12.exe" # Default, user can override
 
@@ -39,26 +58,26 @@ def tensor_to_pil(tensor):
             # Assuming range [0, 1] for float, scale to [0, 255]
             img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
         elif img_np.dtype != np.uint8:
-            print(f"[KoboldCppNode] Warning: Unexpected tensor dtype {img_np.dtype}, attempting conversion.")
+            safe_print(f"[KoboldCppNode] Warning: Unexpected tensor dtype {img_np.dtype}, attempting conversion.")
             # Attempt conversion, assuming data range is appropriate or clipping handles it
             try:
                 img_np = img_np.astype(np.uint8)
             except ValueError as e:
-                 print(f"[KoboldCppNode] Error converting tensor dtype {img_np.dtype} to uint8: {e}", file=sys.stderr)
+                 safe_print(f"[KoboldCppNode] Error converting tensor dtype {img_np.dtype} to uint8: {e}", file=sys.stderr)
                  continue # Skip this image if conversion fails
 
         # Ensure it's 3D (H, W, C) or 2D (H, W)
         if img_np.ndim == 3 and img_np.shape[2] == 1: # Grayscale image with channel dim
             img_np = img_np.squeeze(axis=2) # Convert to 2D grayscale
         elif img_np.ndim != 2 and (img_np.ndim != 3 or img_np.shape[2] not in [3, 4]):
-             print(f"[KoboldCppNode] Warning: Unexpected tensor shape {img_np.shape}, skipping image.", file=sys.stderr)
+             safe_print(f"[KoboldCppNode] Warning: Unexpected tensor shape {img_np.shape}, skipping image.", file=sys.stderr)
              continue
 
         try:
             pil_image = Image.fromarray(img_np)
             images.append(pil_image)
         except Exception as e:
-            print(f"[KoboldCppNode] Error converting tensor slice to PIL Image: {e}", file=sys.stderr)
+            safe_print(f"[KoboldCppNode] Error converting tensor slice to PIL Image: {e}", file=sys.stderr)
             return None # Return None if any conversion fails
     # Return the first image in the batch
     return images[0] if images else None
@@ -80,7 +99,7 @@ def pil_to_base64(pil_image, format="jpeg"):
         base64_string = base64.b64encode(img_bytes).decode('utf-8')
         return base64_string
     except Exception as e:
-        print(f"[KoboldCppNode] Error converting PIL image to Base64: {e}", file=sys.stderr)
+        safe_print(f"[KoboldCppNode] Error converting PIL image to Base64: {e}", file=sys.stderr)
         return None
 
 def find_free_port():
@@ -97,57 +116,57 @@ def check_api_ready(port, timeout=60):
         try:
             response = requests.get(url, timeout=1) # Short timeout for individual check
             if response.status_code == 200:
-                print(f"[KoboldCppNode] API on port {port} is ready.")
+                safe_print(f"[KoboldCppNode] API on port {port} is ready.")
                 return True
         except requests.exceptions.ConnectionError:
             pass # Ignore connection errors while waiting
         except requests.exceptions.Timeout:
-            print(f"[KoboldCppNode] API check timed out on port {port}.") # Log timeouts during check
+            safe_print(f"[KoboldCppNode] API check timed out on port {port}.") # Log timeouts during check
         except Exception as e:
-             print(f"[KoboldCppNode] Error checking API readiness on port {port}: {e}", file=sys.stderr)
+             safe_print(f"[KoboldCppNode] Error checking API readiness on port {port}: {e}", file=sys.stderr)
              # Don't immediately fail on other errors, maybe transient
         time.sleep(0.5) # Wait before retrying
-    print(f"[KoboldCppNode] API on port {port} did not become ready within {timeout} seconds.", file=sys.stderr)
+    safe_print(f"[KoboldCppNode] API on port {port} did not become ready within {timeout} seconds.", file=sys.stderr)
     return False
 
 def terminate_process(process):
     """Attempts to terminate a subprocess gracefully, then kills it."""
     if process and process.poll() is None: # Check if process exists and is running
-        print(f"[KoboldCppNode] Terminating KoboldCpp process (PID: {process.pid})...")
+        safe_print(f"[KoboldCppNode] Terminating KoboldCpp process (PID: {process.pid})...")
         try:
             # Try graceful termination first (SIGTERM on Unix, equivalent on Windows)
             process.terminate()
             process.wait(timeout=5) # Wait a bit for graceful exit
-            print(f"[KoboldCppNode] Process {process.pid} terminated gracefully.")
+            safe_print(f"[KoboldCppNode] Process {process.pid} terminated gracefully.")
         except (subprocess.TimeoutExpired, PermissionError, OSError) as e:
-            print(f"[KoboldCppNode] Graceful termination failed for PID {process.pid} ({e}), killing...", file=sys.stderr)
+            safe_print(f"[KoboldCppNode] Graceful termination failed for PID {process.pid} ({e}), killing...", file=sys.stderr)
             try:
                 process.kill()
                 process.wait(timeout=2) # Wait briefly for kill
-                print(f"[KoboldCppNode] Process {process.pid} killed.")
+                safe_print(f"[KoboldCppNode] Process {process.pid} killed.")
             except Exception as kill_e:
-                print(f"[KoboldCppNode] Error killing process {process.pid}: {kill_e}", file=sys.stderr)
+                safe_print(f"[KoboldCppNode] Error killing process {process.pid}: {kill_e}", file=sys.stderr)
         except Exception as term_e:
-             print(f"[KoboldCppNode] Error during termination of process {process.pid}: {term_e}", file=sys.stderr)
+             safe_print(f"[KoboldCppNode] Error during termination of process {process.pid}: {term_e}", file=sys.stderr)
              # Attempt kill as fallback
              try:
                   if process.poll() is None:
                        process.kill()
-                       print(f"[KoboldCppNode] Process {process.pid} killed as fallback.")
+                       safe_print(f"[KoboldCppNode] Process {process.pid} killed as fallback.")
              except Exception as kill_e_fb:
-                  print(f"[KoboldCppNode] Error killing process {process.pid} as fallback: {kill_e_fb}", file=sys.stderr)
+                  safe_print(f"[KoboldCppNode] Error killing process {process.pid} as fallback: {kill_e_fb}", file=sys.stderr)
 
 
 def cleanup_koboldcpp_processes():
     """Terminates all cached KoboldCpp processes."""
-    print("[KoboldCppNode] Cleaning up cached KoboldCpp processes...")
+    safe_print("[KoboldCppNode] Cleaning up cached KoboldCpp processes...")
     with cache_lock:
         keys_to_remove = list(koboldcpp_processes_cache.keys()) # Avoid modifying dict while iterating
         for key in keys_to_remove:
             cache_entry = koboldcpp_processes_cache.pop(key, None)
             if cache_entry and "process" in cache_entry:
                 terminate_process(cache_entry["process"])
-    print("[KoboldCppNode] Cleanup finished.")
+    safe_print("[KoboldCppNode] Cleanup finished.")
 
 # Register the cleanup function to run on exit
 atexit.register(cleanup_koboldcpp_processes)
@@ -219,26 +238,26 @@ def launch_and_call_api(
 
         # --- Cache Hit Logic ---
         if cached_entry:
-            print(f"[KoboldCppNode] Found cached process for setup: {cache_key}")
+            safe_print(f"[KoboldCppNode] Found cached process for setup: {cache_key}")
             process = cached_entry["process"]
             port = cached_entry["port"]
             # Check if process is still alive and API is responsive
             if process.poll() is None:
                 if check_api_ready(port, timeout=5): # Quick check for running instance
-                    print(f"[KoboldCppNode] Reusing running KoboldCpp instance on port {port}.")
+                    safe_print(f"[KoboldCppNode] Reusing running KoboldCpp instance on port {port}.")
                     process_to_use = process
                     port_to_use = port
                 else:
-                    print(f"[KoboldCppNode] Cached process on port {port} found but API not responding. Terminating.", file=sys.stderr)
+                    safe_print(f"[KoboldCppNode] Cached process on port {port} found but API not responding. Terminating.", file=sys.stderr)
                     terminate_process(process)
                     koboldcpp_processes_cache.pop(cache_key, None) # Remove dead entry
             else:
-                print(f"[KoboldCppNode] Cached process for setup {cache_key} has terminated. Removing from cache.", file=sys.stderr)
+                safe_print(f"[KoboldCppNode] Cached process for setup {cache_key} has terminated. Removing from cache.", file=sys.stderr)
                 koboldcpp_processes_cache.pop(cache_key, None) # Remove dead entry
 
         # --- Cache Miss Logic (or if cached process was dead) ---
         if not process_to_use:
-            print(f"[KoboldCppNode] No active cached process found for setup: {cache_key}. Launching new instance.")
+            safe_print(f"[KoboldCppNode] No active cached process found for setup: {cache_key}. Launching new instance.")
             # Terminate any OTHER existing cached process before launching a new one
             # This assumes we only want one instance running via this node at a time
             current_keys = list(koboldcpp_processes_cache.keys())
@@ -246,13 +265,13 @@ def launch_and_call_api(
                  if key != cache_key: # Don't terminate self if we just removed it
                       entry_to_terminate = koboldcpp_processes_cache.pop(key, None)
                       if entry_to_terminate:
-                           print(f"[KoboldCppNode] Terminating other cached instance (Setup: {key})")
+                           safe_print(f"[KoboldCppNode] Terminating other cached instance (Setup: {key})")
                            terminate_process(entry_to_terminate["process"])
 
             # Find a free port
             try:
                 port_to_use = find_free_port()
-                print(f"[KoboldCppNode] Found free port: {port_to_use}")
+                safe_print(f"[KoboldCppNode] Found free port: {port_to_use}")
             except Exception as e:
                 return f"ERROR: Could not find a free port: {e}"
 
@@ -282,7 +301,7 @@ def launch_and_call_api(
                     return f"ERROR: Could not parse Extra CLI Arguments: {e}"
 
             # Launch the process
-            print(f"[KoboldCppNode] Launching KoboldCpp: {' '.join(command)}")
+            safe_print(f"[KoboldCppNode] Launching KoboldCpp: {' '.join(command)}")
             try:
                 creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                 # Use Popen to run in background
@@ -296,7 +315,7 @@ def launch_and_call_api(
                     creationflags=creationflags,
                     shell=False
                 )
-                print(f"[KoboldCppNode] KoboldCpp process launched (PID: {process_to_use.pid}) on port {port_to_use}.")
+                safe_print(f"[KoboldCppNode] KoboldCpp process launched (PID: {process_to_use.pid}) on port {port_to_use}.")
                 # Store in cache immediately
                 koboldcpp_processes_cache[cache_key] = {"process": process_to_use, "port": port_to_use}
             except Exception as e:
@@ -355,7 +374,7 @@ def launch_and_call_api(
 
     # --- Call KoboldCpp API ---
     api_url = f"http://localhost:{port_to_use}/api/v1/generate" # Standard endpoint
-    print(f"[KoboldCppNode] Sending API request to {api_url}")
+    safe_print(f"[KoboldCppNode] Sending API request to {api_url}")
     generated_text = f"ERROR: API call failed to {api_url}."
     try:
         response = requests.post(api_url, json=payload, timeout=300) # 5 min timeout for generation
@@ -381,7 +400,7 @@ def launch_and_call_api(
              with cache_lock:
                   cached_entry = koboldcpp_processes_cache.get(cache_key)
                   if cached_entry and cached_entry["process"].poll() is not None:
-                       print("[KoboldCppNode] API connection failed, removing dead process from cache.", file=sys.stderr)
+                       safe_print("[KoboldCppNode] API connection failed, removing dead process from cache.", file=sys.stderr)
                        koboldcpp_processes_cache.pop(cache_key, None)
                        terminate_process(cached_entry["process"]) # Ensure cleanup
     except Exception as e:
@@ -410,7 +429,7 @@ class KoboldCppLauncherNode: # Renamed from KoboldCppNode
         default_path_exists = os.path.exists(DEFAULT_KOBOLDCPP_PATH)
         kobold_path_default = DEFAULT_KOBOLDCPP_PATH if default_path_exists else ""
         if not default_path_exists:
-             print(f"[KoboldCppNode] Warning: Default KoboldCpp path not found: {DEFAULT_KOBOLDCPP_PATH}. Please provide the correct path.")
+             safe_print(f"[KoboldCppNode] Warning: Default KoboldCpp path not found: {DEFAULT_KOBOLDCPP_PATH}. Please provide the correct path.")
 
         return {
             "required": {
@@ -465,7 +484,7 @@ class KoboldCppLauncherNode: # Renamed from KoboldCppNode
                  if not base64_image_string:
                       return ("ERROR: Failed to convert input image to Base64.",)
              else:
-                 print("[KoboldCppNode] Warning: Could not convert input tensor to PIL image.", file=sys.stderr)
+                 safe_print("[KoboldCppNode] Warning: Could not convert input tensor to PIL image.", file=sys.stderr)
 
         # --- Map quant_kv display name back to integer ---
         quant_kv_int = self.QUANT_KV_MAP.get(quant_kv, 0)
@@ -560,7 +579,7 @@ class KoboldCppApiNode:
         try:
             response = requests.get(version_url, timeout=3) # Quick timeout for check
             response.raise_for_status()
-            print(f"[KoboldCppApiNode] Successfully connected to KoboldCpp API at {api_url_cleaned}.")
+            safe_print(f"[KoboldCppApiNode] Successfully connected to KoboldCpp API at {api_url_cleaned}.")
         except requests.exceptions.RequestException as e:
             return (f"ERROR: Failed to connect to KoboldCpp API at {api_url_cleaned}. Is it running? Details: {e}",)
         except Exception as e:
@@ -575,7 +594,7 @@ class KoboldCppApiNode:
                  if not base64_image_string:
                       return ("ERROR: Failed to convert input image to Base64.",)
              else:
-                 print("[KoboldCppApiNode] Warning: Could not convert input tensor to PIL image.", file=sys.stderr)
+                 safe_print("[KoboldCppApiNode] Warning: Could not convert input tensor to PIL image.", file=sys.stderr)
 
         # --- Prepare Stop Sequences ---
         stop_sequence_list = None
@@ -607,7 +626,7 @@ class KoboldCppApiNode:
 
         # --- Call KoboldCpp API ---
         generate_url = f"{api_url_cleaned}/api/v1/generate"
-        print(f"[KoboldCppApiNode] Sending API request to {generate_url}")
+        safe_print(f"[KoboldCppApiNode] Sending API request to {generate_url}")
         try:
             response = requests.post(generate_url, json=payload, timeout=300) # 5 min timeout
             response.raise_for_status()
