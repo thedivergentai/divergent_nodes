@@ -137,7 +137,7 @@ class LoraStrengthXYPlot:
                                  vae: ComfyVAEObjectT,
                                  positive: ComfyConditioningT,
                                  negative: ComfyConditioningT,
-                                 latent: ComfyLatentT,
+                                 latent: ComfyLatentT, # Keep input name as 'latent' for consistency
                                  seed: int,
                                  steps: int,
                                  cfg: float,
@@ -147,6 +147,7 @@ class LoraStrengthXYPlot:
         """Performs sampling and VAE decoding."""
         logger.debug(f"  Starting sampling: {sampler_name}/{scheduler}, Steps: {steps}, CFG: {cfg}, Seed: {seed}")
         try:
+            # --- FIX 1: Correct keyword argument for latent tensor ---
             # Use keyword arguments for clarity and correctness
             samples_latent = comfy.sample.sample(
                 model=model,
@@ -157,10 +158,11 @@ class LoraStrengthXYPlot:
                 scheduler=scheduler,
                 positive=positive,
                 negative=negative,
-                latent=latent,
+                latent_image=latent['samples'], # Pass the tensor with correct keyword
                 denoise=1.0
                 # Note: clip and vae are typically handled implicitly by comfy.sample.sample
             )
+            # --- End FIX 1 ---
 
             # Handle potential variations in the return type of sample
             if isinstance(samples_latent, dict) and "samples" in samples_latent:
@@ -192,7 +194,9 @@ class LoraStrengthXYPlot:
         if not (save_individual_images and run_folder): return
         try:
             img_tensor_hwc = image_tensor_bhwc[0] # Assume batch 1 for saving
-            img_np = img_tensor_hwc.cpu().numpy()
+            # --- FIX 2a: Convert to float32 before numpy ---
+            img_np = img_tensor_hwc.float().cpu().numpy()
+            # --- End FIX 2a ---
             img_pil = Image.fromarray(np.clip(img_np * 255.0, 0, 255).astype(np.uint8))
             safe_lora_name = re.sub(r'[\\/*?:"<>|]', '_', lora_filename_part)
             filename = f"row-{row_idx}_col-{col_idx}_lora-{safe_lora_name}_str-{strength:.3f}.png"
@@ -205,7 +209,8 @@ class LoraStrengthXYPlot:
     def _create_placeholder_image(self, H: int, W: int, C: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         """Creates a black placeholder image."""
         try:
-            placeholder = torch.zeros((H, W, C), dtype=dtype, device=device)
+            # Ensure placeholder is float32 for consistency, even if model dtype was different
+            placeholder = torch.zeros((H, W, C), dtype=torch.float32, device=device)
             logger.info("  Created black placeholder image due to generation error.")
             return placeholder
         except Exception as e_placeholder:
@@ -288,23 +293,18 @@ class LoraStrengthXYPlot:
                 H_img, W_img = latent_shape[2] * 8, latent_shape[3] * 8 # Calculate image dimensions from latent
                 C_img = 3 # Assume 3 channels (RGB)
 
-                # --- Corrected device and dtype access ---
-                if hasattr(base_model, 'model') and hasattr(base_model.model, 'device') and hasattr(base_model.model, 'dtype'):
+                # Determine device from model, fallback to CPU
+                if hasattr(base_model, 'model') and hasattr(base_model.model, 'device'):
                     device = base_model.model.device
-                    dtype = base_model.model.dtype
-                elif hasattr(base_model, 'load_device'): # Fallback for some model types (e.g., older Comfy versions or different patchers)
+                elif hasattr(base_model, 'load_device'):
                     device = base_model.load_device
-                    # Attempt to get dtype, fallback to float32
-                    dtype = getattr(base_model, 'dtype', torch.float32) # Check direct attribute first
-                    if hasattr(base_model, 'model_dtype') and callable(base_model.model_dtype): # Check for method
-                         dtype = base_model.model_dtype()
                 else:
-                    logger.warning("Could not reliably determine model device/dtype for placeholder. Falling back to CPU/float32.")
+                    logger.warning("Could not reliably determine model device for placeholder. Falling back to CPU.")
                     device = torch.device('cpu')
-                    dtype = torch.float32
-                # --- End Correction ---
 
-                img_tensor_hwc = self._create_placeholder_image(H_img, W_img, C_img, device, dtype)
+                # Placeholder dtype is handled in _create_placeholder_image (always float32)
+                img_tensor_hwc = self._create_placeholder_image(H_img, W_img, C_img, device, torch.float32) # Pass float32 explicitly
+
             except Exception as e_placeholder_fallback:
                 logger.critical(f"  Failed to determine placeholder dimensions or create placeholder: {e_placeholder_fallback}", exc_info=True)
                 raise RuntimeError("Failed to generate image and could not create placeholder.") from e_generate
@@ -390,18 +390,18 @@ class LoraStrengthXYPlot:
             comfy.model_management.soft_empty_cache()
 
             H, W, C = first_image_hwc.shape
-            dtype = first_image_hwc.dtype
+            dtype = torch.float32 # Standardize grid to float32
             device = first_image_hwc.device
-            logger.info(f"Image dimensions: {H}H x {W}W x {C}C, Type: {dtype}, Device: {device}")
+            logger.info(f"Image dimensions: {H}H x {W}W x {C}C, Type: {first_image_hwc.dtype} -> Grid Type: {dtype}, Device: {device}")
 
             grid_height = H * num_rows + max(0, row_gap * (num_rows - 1))
             grid_width = W * num_cols + max(0, col_gap * (num_cols - 1))
             logger.info(f"Allocating final grid tensor: {grid_height}H x {grid_width}W x {C}C on device {device}")
             final_grid = torch.zeros((grid_height, grid_width, C), dtype=dtype, device=device)
 
-            # Paste the first image
+            # Paste the first image (convert to float32 if needed)
             y_start, x_start = 0, 0
-            final_grid[y_start:y_start + H, x_start:x_start + W, :] = first_image_hwc
+            final_grid[y_start:y_start + H, x_start:x_start + W, :] = first_image_hwc.to(dtype=dtype, device=device)
             del first_image_hwc
             logger.debug("Pasted first image into grid.")
 
@@ -428,12 +428,12 @@ class LoraStrengthXYPlot:
                             img_index=img_idx, row_idx=y_idx, col_idx=x_idx,
                             lora_filename_part=lora_filename_part
                         )
-                        # Paste directly into the grid
-                        final_grid[current_row_y:current_row_y + H, current_col_x:current_col_x + W, :] = img_tensor_hwc
+                        # Paste directly into the grid (convert to float32)
+                        final_grid[current_row_y:current_row_y + H, current_col_x:current_col_x + W, :] = img_tensor_hwc.to(dtype=dtype, device=device)
                         del img_tensor_hwc # Free memory immediately
                     except Exception as e_inner:
                          logger.error(f"Error generating/pasting image {img_idx} for cell ({y_idx},{x_idx}): {e_inner}", exc_info=True)
-                         placeholder = self._create_placeholder_image(H, W, C, device, dtype)
+                         placeholder = self._create_placeholder_image(H, W, C, device, dtype) # Placeholder is already float32
                          final_grid[current_row_y:current_row_y + H, current_col_x:current_col_x + W, :] = placeholder
                          del placeholder
                          generation_successful = False
@@ -448,6 +448,7 @@ class LoraStrengthXYPlot:
                 y_axis_labels = [f"{s:.3f}" for s in plot_strengths]
                 try:
                     logger.debug("Transferring final grid to CPU for label drawing...")
+                    # Grid is already float32, pass directly
                     grid_cpu = final_labeled_tensor.cpu()
                     labeled_grid_cpu = draw_labels_on_grid(
                         grid_cpu, x_labels=x_axis_labels, y_labels=y_axis_labels,
@@ -466,7 +467,9 @@ class LoraStrengthXYPlot:
             if final_labeled_tensor.device != torch.device('cpu'):
                  final_labeled_tensor = final_labeled_tensor.cpu() # Final safety check
 
-            final_output_tensor = final_labeled_tensor.unsqueeze(0) # Add batch dim
+            # --- FIX 2c: Ensure final output tensor is float32 ---
+            final_output_tensor = final_labeled_tensor.float().unsqueeze(0) # Add batch dim and ensure float32
+            # --- End FIX 2c ---
 
             end_time = datetime.now()
             duration = end_time - start_time

@@ -68,7 +68,7 @@ def assemble_image_grid(
         # Use the first image to determine H, W, C and dtype
         first_image = images[0]
         H, W, C = first_image.shape
-        dtype = first_image.dtype
+        dtype = first_image.dtype # Keep original dtype for grid creation if possible
         device = first_image.device # Keep grid on the same device if possible
         logger.debug(f"Base image properties: H={H}, W={W}, C={C}, dtype={dtype}, device={device}")
 
@@ -103,7 +103,8 @@ def assemble_image_grid(
              bg_value = (1.0,) * C if C > 1 else 1.0
 
         # Create background grid tensor on the same device as input images
-        grid_tensor = torch.full((grid_height, grid_width, C), fill_value=bg_value[0] if C==1 else 0.0, dtype=dtype, device=device)
+        # Use float32 for the grid to ensure compatibility later
+        grid_tensor = torch.full((grid_height, grid_width, C), fill_value=bg_value[0] if C==1 else 0.0, dtype=torch.float32, device=device)
         # Fill with tuple if multichannel
         if C > 1:
              for i in range(C):
@@ -122,7 +123,8 @@ def assemble_image_grid(
         for c in range(cols):
             if img_idx < len(images):
                 try:
-                    img_tensor = images[img_idx].to(device) # Ensure image is on the correct device
+                    # Ensure image is on the correct device and convert to float32 for pasting
+                    img_tensor = images[img_idx].to(device=device, dtype=torch.float32)
                     # Check shape again just before pasting (if warning was issued)
                     if img_tensor.shape == (H, W, C):
                         grid_tensor[current_y:current_y + H, current_x:current_x + W, :] = img_tensor
@@ -141,7 +143,7 @@ def assemble_image_grid(
         current_y += H + row_gap
 
     logger.info("Grid assembly complete.")
-    return grid_tensor
+    return grid_tensor # Grid is already float32
 
 # --- Label Drawing ---
 
@@ -239,7 +241,7 @@ def draw_labels_on_grid(
 
     Args:
         grid_tensor (TensorGridHWC): The assembled grid image tensor [H_grid, W_grid, C].
-                                     Assumed to be in CPU memory.
+                                     Assumed to be in CPU memory and float32 dtype.
         x_labels (List[str]): List of labels for columns. Length should match grid columns.
         y_labels (List[str]): List of labels for rows. Length should match grid rows.
         x_axis_label (str): Optional overall label for the X axis (drawn at top).
@@ -271,7 +273,11 @@ def draw_labels_on_grid(
         # Ensure tensor is on CPU and in uint8 format for PIL
         logger.debug("Converting grid tensor to PIL Image...")
         try:
-            grid_np_uint8 = np.clip(grid_tensor.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
+            # --- FIX 2b: Convert to float32 before numpy ---
+            # Ensure input tensor is float32 before converting
+            grid_tensor_float32 = grid_tensor.float()
+            grid_np_uint8 = np.clip(grid_tensor_float32.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
+            # --- End FIX 2b ---
             grid_pil: PilImageT = Image.fromarray(grid_np_uint8)
             # Ensure image mode is RGB for color drawing consistency
             if grid_pil.mode != 'RGB':
@@ -383,7 +389,7 @@ def draw_labels_on_grid(
         labeled_np = np.array(labeled_pil).astype(np.float32) / 255.0
         final_labeled_tensor = torch.from_numpy(labeled_np)
         logger.info("Label drawing complete.")
-        return final_labeled_tensor
+        return final_labeled_tensor # Tensor is already float32
 
     except Exception as e:
         logger.error(f"Unexpected error during label drawing process: {e}", exc_info=True)
