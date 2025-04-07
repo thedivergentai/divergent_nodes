@@ -47,7 +47,7 @@ class GeminiNode:
     RETURN_TYPES: Tuple[str] = ("STRING",)
     RETURN_NAMES: Tuple[str] = ("text",)
     FUNCTION: str = "generate"
-    CATEGORY: str = "Divergent Nodes 👽/Gemini"
+    CATEGORY: str = "👽 Divergent Nodes/Gemini"
 
     def __init__(self):
         """Initializes the Gemini node instance."""

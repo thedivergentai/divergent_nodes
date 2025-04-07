@@ -70,7 +70,7 @@ class KoboldCppLauncherNode:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("text",)
     FUNCTION = "execute"
-    CATEGORY = "Divergent Nodes 👽/KoboldCpp" # Keep category consistent
+    CATEGORY = "👽 Divergent Nodes/KoboldCpp" # Keep category consistent
 
     # Class variables for dropdown options
     GPU_ACCELERATION_MODES: List[str] = ["None", "CuBLAS", "CLBlast", "Vulkan"]
