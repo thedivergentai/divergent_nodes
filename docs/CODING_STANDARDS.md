@@ -66,6 +66,7 @@ This document outlines the coding standards to be followed for this ComfyUI cust
 ## ComfyUI Specifics
 
 *   **Node Structure:** Adhere strictly to the required ComfyUI node structure (`INPUT_TYPES`, `RETURN_TYPES`, `FUNCTION`, `CATEGORY`, mappings).
+*   **Category Naming:** All node `CATEGORY` attributes **must** be prefixed with `"Divergent Nodes 👽/"` (e.g., `"Divergent Nodes 👽/Utilities"`).
 *   **Imports:** Use relative imports (`from .module import Class`) within packages where appropriate.
 *   **Dependencies:** Explicitly list all external Python dependencies in `requirements.txt`.
 

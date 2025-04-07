@@ -51,7 +51,7 @@ class LoraStrengthXYPlot:
     into a single grid image with optional labels. This node helps visualize
     the impact of different LoRAs and their strengths on the final image.
     """
-    CATEGORY = "XY Plots"
+    CATEGORY = "Divergent Nodes 👽/XY Plots"
     OUTPUT_NODE = True # This node produces a final output image
 
     @classmethod
