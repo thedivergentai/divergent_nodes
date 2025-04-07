@@ -2,7 +2,7 @@
 
 This document tracks the progress of refactoring the ComfyUI custom node pack.
 
-**Objective:** Refactor the codebase for improved structure, clarity, documentation, testability, and consistency, making it easier for AI agents and human developers to interact with. Enforce a maximum file length of 400 lines.
+**Objective:** Refactor the codebase for improved structure, clarity, documentation, testability, and consistency, making it easier for AI agents and human developers to interact with. Enforce a maximum file length of 500 lines.
 
 **Plan Phases:**
 

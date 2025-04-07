@@ -35,7 +35,7 @@ This document outlines the coding standards to be followed for this ComfyUI cust
 
 ## Modularity & File Length
 
-*   **Maximum File Length:** No Python file should exceed **400 lines** of code (excluding comments and blank lines where reasonable).
+*   **Maximum File Length:** No Python file should exceed **500 lines** of code (excluding comments and blank lines where reasonable).
 *   **Single Responsibility Principle (SRP):** Functions and classes should ideally have one primary responsibility.
 *   **Decomposition:** Break down long functions (`execute` methods, complex helpers) into smaller, well-named private helper methods (`_helper_method`) or move logic to separate utility modules/classes.
 
