@@ -147,10 +147,14 @@ class LoraStrengthXYPlot:
         """Performs sampling and VAE decoding."""
         logger.debug(f"  Starting sampling: {sampler_name}/{scheduler}, Steps: {steps}, CFG: {cfg}, Seed: {seed}")
         try:
+            # Generate noise based on latent shape and seed
+            noise = comfy.sample.prepare_noise(latent['samples'], seed)
+
             # --- FIX 1: Correct keyword argument for latent tensor ---
             # Use keyword arguments for clarity and correctness
             samples_latent = comfy.sample.sample(
                 model=model,
+                noise=noise, # Pass the generated noise
                 seed=seed,
                 steps=steps,
                 cfg=cfg,
