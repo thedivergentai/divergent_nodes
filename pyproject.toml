@@ -1,0 +1,28 @@
+# pyproject.toml
+
+[tool.black]
+# Default black configuration (line length 88, etc.)
+# No specific overrides needed unless desired.
+
+[tool.ruff]
+# Select common rule sets
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort (import sorting)
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+]
+ignore = []
+
+# Allow unused variables if they start with "_"
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+# Optional: If you want ruff to handle formatting instead of black
+# select = ["RUF100"] # Enable ruff's formatter
+
+[tool.ruff.lint.isort]
+# Optional: Configure import sorting if needed
+# known-first-party = ["my_module"]
