@@ -414,13 +414,6 @@ class LoraStrengthXYPlot:
                 for x_idx, lora_name in enumerate(plot_loras):
                     img_idx += 1
 
-                    # --- Cancellation Check ---
-                    if comfy.model_management.is_interrupted():
-                        logger.warning("Generation interrupted by user.")
-                        interrupted = True
-                        generation_successful = False # Mark as incomplete
-                        break # Break inner loop
-
                     loaded_lora = loaded_loras_cache.get(lora_name)
                     lora_filename_part = os.path.splitext(lora_name)[0] if lora_name != "No LoRA" else "NoLoRA"
                     safe_lora_name = re.sub(r'[\\/*?:"<>|]', '_', lora_filename_part)
