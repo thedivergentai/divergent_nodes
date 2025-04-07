@@ -1,6 +1,7 @@
 """
 Node implementation for generating an XY plot comparing LoRA models vs. strength.
-Refactored for memory efficiency, direct model/clip/vae inputs, and modularity.
+Refactored for memory efficiency using temporary file storage, direct model/clip/vae inputs,
+cancellation support, and optional preview image output.
 """
 import torch
 import numpy as np
@@ -14,11 +15,13 @@ from PIL import Image
 from datetime import datetime
 import re
 import logging
+import tempfile
+import shutil
 from typing import Dict, Any, Tuple, Optional, List, Union, Sequence, TypeAlias
 
 # Import utility functions
 try:
-    from .grid_assembly import draw_labels_on_grid
+    from .grid_assembly import assemble_image_grid, draw_labels_on_grid
     from .plot_utils import (
         validate_lora_path,
         get_lora_files,
@@ -30,6 +33,7 @@ except ImportError:
     logging.basicConfig(level=logging.INFO)
     logging.error("Failed to import utility functions from grid_assembly or plot_utils. Node will likely fail.", exc_info=True)
     # Define dummy functions to prevent NameErrors, though the node will be broken
+    def assemble_image_grid(*args: Any, **kwargs: Any) -> torch.Tensor: raise RuntimeError("grid_assembly not found")
     def draw_labels_on_grid(*args: Any, **kwargs: Any) -> torch.Tensor: raise RuntimeError("grid_assembly not found")
     def validate_lora_path(*args: Any, **kwargs: Any) -> str: raise RuntimeError("plot_utils not found")
     def get_lora_files(*args: Any, **kwargs: Any) -> List[str]: raise RuntimeError("plot_utils not found")
@@ -50,14 +54,15 @@ ComfyVAEObjectT: TypeAlias = Any
 ComfyModelObjectT: TypeAlias = Any
 ComfyLatentT: TypeAlias = Dict[str, torch.Tensor]
 LoadedLoraT: TypeAlias = Optional[Dict[str, torch.Tensor]]
+TensorHWC: TypeAlias = torch.Tensor # Expected shape [H, W, C]
 
 class LoraStrengthXYPlot:
     """
     Generates an XY plot grid comparing LoRAs (X-axis) vs Strength (Y-axis).
 
-    Uses provided Model, CLIP, VAE. Optimized for memory by pre-loading
-    LoRAs and assembling the grid directly on the GPU. Setup logic is
-    delegated to plot_utils.
+    Uses provided Model, CLIP, VAE. Optimized for memory by generating images
+    individually, saving them to a temporary directory, and then assembling
+    the grid from these files. Supports cancellation and optional preview.
     """
     CATEGORY = "👽 Divergent Nodes/XY Plots"
     OUTPUT_NODE = True
@@ -95,7 +100,8 @@ class LoraStrengthXYPlot:
                 "max_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.01}),
             },
             "optional": {
-                "save_individual_images": ("BOOLEAN", {"default": False}),
+                "save_individual_images": ("BOOLEAN", {"default": False, "tooltip": "Save individual grid images to the output folder."}),
+                "display_last_image": ("BOOLEAN", {"default": False, "tooltip": "Output the last generated image as a preview."}), # New Input
                 "output_folder_name": ("STRING", {"default": "XYPlot_LoRA-Strength"}),
                 "row_gap": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1}),
                 "col_gap": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1}),
@@ -105,8 +111,9 @@ class LoraStrengthXYPlot:
             },
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("xy_plot_image",)
+    # Updated return types and names
+    RETURN_TYPES = ("IMAGE", "IMAGE")
+    RETURN_NAMES = ("xy_plot_image", "last_generated_image")
     FUNCTION = "generate_plot"
 
     # --------------------------------------------------------------------------
@@ -128,7 +135,18 @@ class LoraStrengthXYPlot:
                 logger.warning(f"  Latent batch (1) != Cond batch ({cond_batch_size}). Repeating latent sample.")
                 current_latent['samples'] = latent_samples.repeat(cond_batch_size, 1, 1, 1)
             else:
-                logger.warning(f"  Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Mismatch might cause errors.")
+                # Force batch size 1 for latent if mismatch occurs and latent isn't already 1
+                # This might be a less common case but handles potential user errors
+                if latent_batch_size > 1:
+                    logger.warning(f"  Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Using only the first latent sample.")
+                    current_latent['samples'] = latent_samples[0:1]
+                else:
+                    logger.warning(f"  Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Mismatch might cause errors.")
+        # Ensure batch size is 1 for the generation loop
+        if current_latent['samples'].shape[0] > 1:
+             logger.debug("Ensuring latent batch size is 1 for individual image generation.")
+             current_latent['samples'] = current_latent['samples'][0:1]
+
         return current_latent
 
     def _run_sampling_and_decode(self,
@@ -143,18 +161,20 @@ class LoraStrengthXYPlot:
                                  cfg: float,
                                  sampler_name: str,
                                  scheduler: str
-                                 ) -> torch.Tensor:
-        """Performs sampling and VAE decoding."""
+                                 ) -> TensorHWC:
+        """Performs sampling and VAE decoding. Returns tensor [H, W, C]."""
         logger.debug(f"  Starting sampling: {sampler_name}/{scheduler}, Steps: {steps}, CFG: {cfg}, Seed: {seed}")
         try:
-            # Generate noise based on latent shape and seed
+            # Ensure latent batch size is 1 before preparing noise
+            if latent['samples'].shape[0] != 1:
+                 logger.warning(f"Sampler received latent batch size {latent['samples'].shape[0]}, expected 1. Using first sample.")
+                 latent['samples'] = latent['samples'][0:1]
+
             noise = comfy.sample.prepare_noise(latent['samples'], seed)
 
-            # --- FIX 1: Correct keyword argument for latent tensor ---
-            # Use keyword arguments for clarity and correctness
             samples_latent = comfy.sample.sample(
                 model=model,
-                noise=noise, # Pass the generated noise
+                noise=noise,
                 seed=seed,
                 steps=steps,
                 cfg=cfg,
@@ -162,58 +182,49 @@ class LoraStrengthXYPlot:
                 scheduler=scheduler,
                 positive=positive,
                 negative=negative,
-                latent_image=latent['samples'], # Pass the tensor with correct keyword
+                latent_image=latent['samples'], # Pass the tensor [1, C, H_lat, W_lat]
                 denoise=1.0
-                # Note: clip and vae are typically handled implicitly by comfy.sample.sample
             )
-            # --- End FIX 1 ---
 
-            # Handle potential variations in the return type of sample
             if isinstance(samples_latent, dict) and "samples" in samples_latent:
                 latent_to_decode = samples_latent["samples"]
-            elif isinstance(samples_latent, torch.Tensor): # Direct tensor return
+            elif isinstance(samples_latent, torch.Tensor):
                 latent_to_decode = samples_latent
             else:
                  raise ValueError(f"Sampler output unexpected format: {type(samples_latent)}. Expected dict with 'samples' or torch.Tensor.")
 
             logger.debug("  Sampling complete. Decoding...")
-            img_tensor_chw = vae.decode(latent_to_decode) # [B, C, H, W]
+            # Decode expects [B, C, H, W], our B is 1
+            img_tensor_chw = vae.decode(latent_to_decode)
             logger.debug(f"  Decoding complete. Shape: {img_tensor_chw.shape}")
-            img_tensor_bhwc = img_tensor_chw.permute(0, 2, 3, 1) # [B, H, W, C]
-            return img_tensor_bhwc
+            # Remove batch dim and permute: [C, H, W] -> [H, W, C]
+            img_tensor_hwc = img_tensor_chw.squeeze(0).permute(1, 2, 0)
+            return img_tensor_hwc # Return [H, W, C]
         except Exception as e:
             logger.error(f"  Error during sampling or decoding: {e}", exc_info=True)
             raise RuntimeError("Sampling or VAE Decoding failed.") from e
 
-    def _save_image_if_enabled(self,
-                               image_tensor_bhwc: torch.Tensor,
-                               run_folder: Optional[str],
-                               save_individual_images: bool,
-                               img_index: int,
-                               row_idx: int,
-                               col_idx: int,
-                               lora_filename_part: str,
-                               strength: float):
-        """Saves the generated image to disk if enabled."""
-        if not (save_individual_images and run_folder): return
+    def _save_tensor_to_file(self,
+                             image_tensor_hwc: TensorHWC,
+                             filepath: str):
+        """Saves a [H, W, C] tensor to a file using PIL."""
         try:
-            img_tensor_hwc = image_tensor_bhwc[0] # Assume batch 1 for saving
-            # --- FIX 2a: Convert to float32 before numpy ---
-            img_np = img_tensor_hwc.float().cpu().numpy()
-            # --- End FIX 2a ---
+            # Convert tensor to PIL Image
+            img_tensor_float32 = image_tensor_hwc.float() # Ensure float32
+            img_np = img_tensor_float32.cpu().numpy()
             img_pil = Image.fromarray(np.clip(img_np * 255.0, 0, 255).astype(np.uint8))
-            safe_lora_name = re.sub(r'[\\/*?:"<>|]', '_', lora_filename_part)
-            filename = f"row-{row_idx}_col-{col_idx}_lora-{safe_lora_name}_str-{strength:.3f}.png"
-            filepath = os.path.join(run_folder, filename)
-            logger.debug(f"  Saving individual image to: {filepath}")
+            # Save the image
             img_pil.save(filepath)
+            logger.debug(f"  Saved image tensor to: {filepath}")
         except Exception as e_save:
-            logger.warning(f"  Failed to save individual image {img_index}. Error: {e_save}", exc_info=True)
+            logger.warning(f"  Failed to save image tensor to {filepath}. Error: {e_save}", exc_info=True)
+            # Raise the error so the main loop knows saving failed if needed
+            raise IOError(f"Failed to save image to {filepath}") from e_save
 
-    def _create_placeholder_image(self, H: int, W: int, C: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        """Creates a black placeholder image."""
+    def _create_placeholder_image(self, H: int, W: int, C: int, device: torch.device) -> TensorHWC:
+        """Creates a black placeholder image tensor [H, W, C] on the specified device."""
         try:
-            # Ensure placeholder is float32 for consistency, even if model dtype was different
+            # Ensure placeholder is float32 for consistency
             placeholder = torch.zeros((H, W, C), dtype=torch.float32, device=device)
             logger.info("  Created black placeholder image due to generation error.")
             return placeholder
@@ -236,20 +247,18 @@ class LoraStrengthXYPlot:
         scheduler: str,
         loaded_lora: LoadedLoraT, # Pass pre-loaded LoRA tensor
         strength: float,
-        run_folder: Optional[str],
-        save_individual_images: bool,
         img_index: int,
-        row_idx: int,
-        col_idx: int,
         lora_filename_part: str
-    ) -> torch.Tensor:
+    ) -> TensorHWC:
         """
         Generates a single image tile using pre-loaded LoRA. Returns tensor [H, W, C].
+        Handles errors by returning a placeholder tensor.
         """
         logger.info(f"\nGenerating image {img_index} (LoRA: '{lora_filename_part}', Strength: {strength:.3f})")
-        img_tensor_hwc: Optional[torch.Tensor] = None
+        img_tensor_hwc: Optional[TensorHWC] = None
         current_model = None
         current_clip = None
+        generation_failed = False
 
         try:
             # 1. Clone base models
@@ -268,30 +277,20 @@ class LoraStrengthXYPlot:
             else:
                 logger.debug(f"  Skipping LoRA application ('{lora_filename_part}' not loaded or is baseline).")
 
-            # 3. Prepare Latent
+            # 3. Prepare Latent (ensure batch size 1)
             current_latent = self._prepare_latent_for_sampling(base_latent, positive)
 
             # 4. Run Sampling and Decode
-            image_tensor_bhwc = self._run_sampling_and_decode(
+            img_tensor_hwc = self._run_sampling_and_decode(
                 current_model, current_clip, base_vae, positive, negative, current_latent,
                 seed + img_index - 1, # Increment seed per image
                 steps, cfg, sampler_name, scheduler
             )
 
-            # Extract single image [H, W, C]
-            if image_tensor_bhwc.shape[0] > 1:
-                 logger.warning(f"  Sampler returned batch size {image_tensor_bhwc.shape[0]}, using only the first image.")
-            img_tensor_hwc = image_tensor_bhwc[0]
-
-            # 5. Save Individual Image (Optional)
-            self._save_image_if_enabled(
-                image_tensor_bhwc, run_folder, save_individual_images,
-                img_index, row_idx, col_idx, lora_filename_part, strength
-            )
-
         except Exception as e_generate:
             logger.error(f"  ERROR generating image {img_index} (LoRA: '{lora_filename_part}', Str: {strength:.3f}). Error: {e_generate}", exc_info=True)
-            # Create placeholder
+            generation_failed = True
+            # Create placeholder on the model's device
             try:
                 latent_shape = base_latent['samples'].shape
                 H_img, W_img = latent_shape[2] * 8, latent_shape[3] * 8 # Calculate image dimensions from latent
@@ -306,11 +305,11 @@ class LoraStrengthXYPlot:
                     logger.warning("Could not reliably determine model device for placeholder. Falling back to CPU.")
                     device = torch.device('cpu')
 
-                # Placeholder dtype is handled in _create_placeholder_image (always float32)
-                img_tensor_hwc = self._create_placeholder_image(H_img, W_img, C_img, device, torch.float32) # Pass float32 explicitly
+                img_tensor_hwc = self._create_placeholder_image(H_img, W_img, C_img, device)
 
             except Exception as e_placeholder_fallback:
                 logger.critical(f"  Failed to determine placeholder dimensions or create placeholder: {e_placeholder_fallback}", exc_info=True)
+                # Re-raise the original generation error if placeholder fails
                 raise RuntimeError("Failed to generate image and could not create placeholder.") from e_generate
 
         finally:
@@ -321,7 +320,29 @@ class LoraStrengthXYPlot:
         if img_tensor_hwc is None: # Should not happen due to error handling, but safeguard
              raise RuntimeError(f"Image tensor generation failed unexpectedly for index {img_index}.")
 
-        return img_tensor_hwc
+        return img_tensor_hwc # Return [H, W, C] tensor (either generated or placeholder)
+
+    def _load_images_from_paths(self, image_paths: List[str], device: torch.device = torch.device('cpu')) -> List[TensorHWC]:
+        """Loads images from file paths into a list of tensors [H, W, C] on the specified device."""
+        loaded_tensors = []
+        logger.info(f"Loading {len(image_paths)} images from temporary files...")
+        for i, path in enumerate(image_paths):
+            try:
+                if not os.path.exists(path):
+                    logger.warning(f"Temporary image file not found: {path}. Skipping.")
+                    # Optionally, create a placeholder here if strict grid matching is needed
+                    continue
+
+                img_pil = Image.open(path).convert('RGB')
+                img_np = np.array(img_pil).astype(np.float32) / 255.0
+                img_tensor = torch.from_numpy(img_np).to(device) # Move to target device
+                loaded_tensors.append(img_tensor)
+                logger.debug(f"  Loaded image {i+1}/{len(image_paths)}: {path}")
+            except Exception as e:
+                logger.error(f"Failed to load image from path {path}: {e}", exc_info=True)
+                # Optionally, append a placeholder if an image fails to load
+        logger.info(f"Successfully loaded {len(loaded_tensors)} images.")
+        return loaded_tensors
 
     # --------------------------------------------------------------------------
     # Main Orchestration Method
@@ -343,21 +364,27 @@ class LoraStrengthXYPlot:
                       y_strength_steps: int,
                       max_strength: float,
                       save_individual_images: bool = False,
+                      display_last_image: bool = False, # New parameter
                       output_folder_name: str = "XYPlot_LoRA-Strength",
                       row_gap: int = 0,
                       col_gap: int = 0,
                       draw_labels: bool = True,
                       x_axis_label: str = "",
                       y_axis_label: str = ""
-                      ) -> Tuple[torch.Tensor]:
-        """Orchestrates the XY plot generation using utilities."""
-        logger.info("--- Starting LoRA vs Strength XY Plot Generation (Optimized/Modular) ---")
+                      ) -> Tuple[torch.Tensor, torch.Tensor]: # Updated return tuple
+        """Orchestrates the XY plot generation using temporary file storage."""
+        logger.info("--- Starting LoRA vs Strength XY Plot Generation (Temp File Storage) ---")
         start_time = datetime.now()
         generation_successful = True
-        loaded_loras_cache = {} # Keep cache local to this execution
+        loaded_loras_cache = {}
+        temp_dir = None
+        generated_image_paths: List[str] = []
+        last_image_tensor_cpu: Optional[TensorHWC] = None
+        final_output_tensor = torch.zeros((1, 64, 64, 3), dtype=torch.float32) # Default empty output
+        preview_tensor = torch.zeros((1, 64, 64, 3), dtype=torch.float32) # Default empty preview
 
         try:
-            # --- Setup using imported utils ---
+            # --- Setup ---
             validated_lora_path = validate_lora_path(lora_folder_path)
             lora_files = get_lora_files(validated_lora_path)
             plot_loras, plot_strengths = determine_plot_axes(
@@ -371,125 +398,152 @@ class LoraStrengthXYPlot:
             if total_images == 0:
                  raise ValueError("Plot generation resulted in zero images based on inputs.")
 
+            # Create temporary directory
+            temp_dir = tempfile.mkdtemp(prefix="lora_strength_plot_")
+            logger.info(f"Created temporary directory: {temp_dir}")
+
             logger.info(f"Preparing to generate {total_images} images ({num_rows} rows x {num_cols} cols).")
             run_folder = setup_output_directory(output_folder_name) if save_individual_images else None
 
-            # --- Determine Grid Geometry & Allocate Grid Tensor ---
-            first_img_index = 1
-            first_lora_name = plot_loras[0]
-            first_strength = plot_strengths[0]
-            first_loaded_lora = loaded_loras_cache.get(first_lora_name)
-            first_lora_filename_part = os.path.splitext(first_lora_name)[0] if first_lora_name != "No LoRA" else "NoLoRA"
-
-            logger.info("Generating first image to determine grid geometry...")
-            first_image_hwc = self._generate_single_image(
-                base_model=model, base_clip=clip, base_vae=vae,
-                positive=positive, negative=negative, base_latent=latent_image,
-                seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
-                loaded_lora=first_loaded_lora, strength=first_strength,
-                run_folder=run_folder, save_individual_images=save_individual_images,
-                img_index=first_img_index, row_idx=0, col_idx=0,
-                lora_filename_part=first_lora_filename_part
-            )
-            comfy.model_management.soft_empty_cache()
-
-            H, W, C = first_image_hwc.shape
-            dtype = torch.float32 # Standardize grid to float32
-            device = first_image_hwc.device
-            logger.info(f"Image dimensions: {H}H x {W}W x {C}C, Type: {first_image_hwc.dtype} -> Grid Type: {dtype}, Device: {device}")
-
-            grid_height = H * num_rows + max(0, row_gap * (num_rows - 1))
-            grid_width = W * num_cols + max(0, col_gap * (num_cols - 1))
-            logger.info(f"Allocating final grid tensor: {grid_height}H x {grid_width}W x {C}C on device {device}")
-            final_grid = torch.zeros((grid_height, grid_width, C), dtype=dtype, device=device)
-
-            # Paste the first image (convert to float32 if needed)
-            y_start, x_start = 0, 0
-            final_grid[y_start:y_start + H, x_start:x_start + W, :] = first_image_hwc.to(dtype=dtype, device=device)
-            del first_image_hwc
-            logger.debug("Pasted first image into grid.")
-
-            # --- Generation Loop (Optimized) ---
+            # --- Generation Loop (Saving to Temp Files) ---
             logger.info("Starting main generation loop...")
-            img_idx = 1
+            img_idx = 0
+            interrupted = False
             for y_idx, strength in enumerate(plot_strengths):
-                current_row_y = y_idx * (H + row_gap)
+                if interrupted: break
                 for x_idx, lora_name in enumerate(plot_loras):
                     img_idx += 1
-                    if y_idx == 0 and x_idx == 0: continue # Skip first
 
-                    current_col_x = x_idx * (W + col_gap)
+                    # --- Cancellation Check ---
+                    if comfy.model_management.is_interrupted():
+                        logger.warning("Generation interrupted by user.")
+                        interrupted = True
+                        generation_successful = False # Mark as incomplete
+                        break # Break inner loop
+
                     loaded_lora = loaded_loras_cache.get(lora_name)
                     lora_filename_part = os.path.splitext(lora_name)[0] if lora_name != "No LoRA" else "NoLoRA"
+                    safe_lora_name = re.sub(r'[\\/*?:"<>|]', '_', lora_filename_part)
+                    temp_filename = f"img_{img_idx:04d}_row-{y_idx}_col-{x_idx}_lora-{safe_lora_name}_str-{strength:.3f}.png"
+                    temp_filepath = os.path.join(temp_dir, temp_filename)
 
+                    img_tensor_hwc: Optional[TensorHWC] = None
                     try:
+                        # Generate image (returns [H, W, C] tensor on model device, or placeholder)
                         img_tensor_hwc = self._generate_single_image(
                             base_model=model, base_clip=clip, base_vae=vae,
                             positive=positive, negative=negative, base_latent=latent_image,
                             seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
                             loaded_lora=loaded_lora, strength=strength,
-                            run_folder=run_folder, save_individual_images=save_individual_images,
-                            img_index=img_idx, row_idx=y_idx, col_idx=x_idx,
-                            lora_filename_part=lora_filename_part
+                            img_index=img_idx, lora_filename_part=lora_filename_part
                         )
-                        # Paste directly into the grid (convert to float32)
-                        final_grid[current_row_y:current_row_y + H, current_col_x:current_col_x + W, :] = img_tensor_hwc.to(dtype=dtype, device=device)
-                        del img_tensor_hwc # Free memory immediately
+
+                        # Save to temporary file
+                        self._save_tensor_to_file(img_tensor_hwc, temp_filepath)
+                        generated_image_paths.append(temp_filepath)
+
+                        # Save to permanent output folder if requested
+                        if run_folder:
+                            perm_filename = f"row-{y_idx}_col-{x_idx}_lora-{safe_lora_name}_str-{strength:.3f}.png"
+                            perm_filepath = os.path.join(run_folder, perm_filename)
+                            try:
+                                self._save_tensor_to_file(img_tensor_hwc, perm_filepath)
+                            except Exception as e_perm_save:
+                                logger.warning(f"Failed to save image to permanent location {perm_filepath}: {e_perm_save}")
+                                # Continue even if permanent save fails
+
+                        # Update last image for preview (move to CPU)
+                        last_image_tensor_cpu = img_tensor_hwc.cpu().clone()
+
                     except Exception as e_inner:
-                         logger.error(f"Error generating/pasting image {img_idx} for cell ({y_idx},{x_idx}): {e_inner}", exc_info=True)
-                         placeholder = self._create_placeholder_image(H, W, C, device, dtype) # Placeholder is already float32
-                         final_grid[current_row_y:current_row_y + H, current_col_x:current_col_x + W, :] = placeholder
-                         del placeholder
+                         logger.error(f"Error processing image {img_idx} for cell ({y_idx},{x_idx}): {e_inner}", exc_info=True)
                          generation_successful = False
+                         # Placeholder should have been created by _generate_single_image
+                         # If saving failed, path won't be added, grid assembly will handle missing files
                     finally:
-                         comfy.model_management.soft_empty_cache() # Clean up periodically
+                         # Clean up GPU tensor immediately
+                         del img_tensor_hwc
+                         comfy.model_management.soft_empty_cache()
+
+            # --- Post-Loop Assembly ---
+            if not generated_image_paths:
+                logger.error("No images were generated or saved successfully.")
+                raise RuntimeError("Failed to generate any images for the plot.")
+
+            # Load images from temporary files (to CPU)
+            # Determine device for assembly (prefer CPU for PIL drawing)
+            assembly_device = torch.device('cpu')
+            loaded_image_tensors = self._load_images_from_paths(generated_image_paths, device=assembly_device)
+
+            if not loaded_image_tensors:
+                 raise RuntimeError("Failed to load any generated images from temporary files.")
+
+            # Determine actual grid size based on loaded images
+            actual_cols = num_cols
+            actual_rows = (len(loaded_image_tensors) + actual_cols - 1) // actual_cols # Calculate rows based on loaded count
+            logger.info(f"Assembling grid from {len(loaded_image_tensors)} loaded images into {actual_rows}x{actual_cols} grid.")
+
+            # Assemble the grid
+            assembled_grid_tensor = assemble_image_grid(
+                loaded_image_tensors, actual_rows, actual_cols, row_gap, col_gap
+            )
+            del loaded_image_tensors # Free memory
 
             # --- Label Drawing ---
-            final_labeled_tensor = final_grid
+            final_labeled_tensor = assembled_grid_tensor # Already on CPU, float32
             if draw_labels:
                 logger.info("Drawing labels on grid...")
-                x_axis_labels = [os.path.splitext(name)[0] if name != "No LoRA" else "No LoRA" for name in plot_loras]
-                y_axis_labels = [f"{s:.3f}" for s in plot_strengths]
+                # Adjust labels if interrupted
+                actual_plot_loras = plot_loras[:actual_cols]
+                actual_plot_strengths = plot_strengths[:actual_rows]
+                x_axis_labels = [os.path.splitext(name)[0] if name != "No LoRA" else "No LoRA" for name in actual_plot_loras]
+                y_axis_labels = [f"{s:.3f}" for s in actual_plot_strengths]
                 try:
-                    logger.debug("Transferring final grid to CPU for label drawing...")
-                    # Grid is already float32, pass directly
-                    grid_cpu = final_labeled_tensor.cpu()
-                    labeled_grid_cpu = draw_labels_on_grid(
-                        grid_cpu, x_labels=x_axis_labels, y_labels=y_axis_labels,
+                    final_labeled_tensor = draw_labels_on_grid(
+                        assembled_grid_tensor, x_labels=x_axis_labels, y_labels=y_axis_labels,
                         x_axis_label=x_axis_label, y_axis_label=y_axis_label,
-                        row_gap=row_gap, col_gap=col_gap # Pass gap values
+                        row_gap=row_gap, col_gap=col_gap
                     )
-                    final_labeled_tensor = labeled_grid_cpu # Keep on CPU for return
                     logger.debug(f"Labels drawn. Final tensor shape: {final_labeled_tensor.shape}, Device: {final_labeled_tensor.device}")
                 except Exception as e_label:
                      logger.error(f"Failed to draw labels on grid: {e_label}", exc_info=True)
-                     final_labeled_tensor = final_grid.cpu() # Return unlabeled grid on CPU
+                     # Use unlabeled grid if labeling fails
             else:
                  logger.info("Label drawing skipped.")
-                 final_labeled_tensor = final_grid.cpu() # Ensure CPU tensor for return
 
-            # --- Final Output ---
-            if final_labeled_tensor.device != torch.device('cpu'):
-                 final_labeled_tensor = final_labeled_tensor.cpu() # Final safety check
+            # --- Final Output Preparation ---
+            # Ensure final tensor is float32 and has batch dimension
+            final_output_tensor = final_labeled_tensor.float().unsqueeze(0)
 
-            # --- FIX 2c: Ensure final output tensor is float32 ---
-            final_output_tensor = final_labeled_tensor.float().unsqueeze(0) # Add batch dim and ensure float32
-            # --- End FIX 2c ---
+            # Prepare preview tensor
+            if display_last_image and last_image_tensor_cpu is not None:
+                preview_tensor = last_image_tensor_cpu.float().unsqueeze(0)
+            elif display_last_image:
+                 logger.warning("Display last image requested, but no image was successfully generated/kept.")
+                 # Keep default empty preview
 
             end_time = datetime.now()
             duration = end_time - start_time
-            logger.info(f"--- XY Plot: Generation Complete (Duration: {duration}) ---")
+            logger.info(f"--- XY Plot: Generation Finished (Duration: {duration}) ---")
             if not generation_successful:
-                 logger.warning("Plot generation finished, but one or more images failed.")
+                 logger.warning("Plot generation finished, but one or more images may have failed or process was interrupted.")
 
-            return (final_output_tensor,)
+            return (final_output_tensor, preview_tensor)
 
         except Exception as e:
             logger.critical(f"--- XY Plot: Generation FAILED: {e} ---", exc_info=True)
-            raise RuntimeError(f"XY Plot generation failed: {e}") from e
+            # Return default empty tensors on critical failure
+            return (final_output_tensor, preview_tensor)
+
         finally:
-            # Clean up pre-loaded LoRAs from memory after execution finishes or fails
+            # --- Cleanup ---
             del loaded_loras_cache
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    logger.info(f"Removed temporary directory: {temp_dir}")
+                except Exception as e_cleanup:
+                    logger.error(f"Failed to remove temporary directory {temp_dir}: {e_cleanup}", exc_info=True)
             comfy.model_management.soft_empty_cache()
 
 # Note: Mappings are handled in xy_plotting/__init__.py
