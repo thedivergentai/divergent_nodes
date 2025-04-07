@@ -456,7 +456,8 @@ class LoraStrengthXYPlot:
                     grid_cpu = final_labeled_tensor.cpu()
                     labeled_grid_cpu = draw_labels_on_grid(
                         grid_cpu, x_labels=x_axis_labels, y_labels=y_axis_labels,
-                        x_axis_label=x_axis_label, y_axis_label=y_axis_label
+                        x_axis_label=x_axis_label, y_axis_label=y_axis_label,
+                        row_gap=row_gap, col_gap=col_gap # Pass gap values
                     )
                     final_labeled_tensor = labeled_grid_cpu # Keep on CPU for return
                     logger.debug(f"Labels drawn. Final tensor shape: {final_labeled_tensor.shape}, Device: {final_labeled_tensor.device}")

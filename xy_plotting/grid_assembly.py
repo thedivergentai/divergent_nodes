@@ -231,7 +231,9 @@ def draw_labels_on_grid(
     y_axis_label: str = "",
     font_size: int = 20,
     text_color: RgbTupleT = (0, 0, 0), # Black
-    bg_color: RgbTupleT = (255, 255, 255) # White
+    bg_color: RgbTupleT = (255, 255, 255), # White
+    row_gap: int = 0, # Add gap parameters
+    col_gap: int = 0
 ) -> TensorGridHWC:
     """
     Draws X and Y axis labels onto a grid image tensor using PIL.
@@ -325,17 +327,15 @@ def draw_labels_on_grid(
              labeled_np = np.array(labeled_pil).astype(np.float32) / 255.0
              return torch.from_numpy(labeled_np)
 
-
-        # Estimate cell height/width (assuming uniform grid *without* gaps for label positioning)
-        # This calculation is approximate and assumes the input grid_tensor did NOT include gaps.
-        # If the grid assembly included gaps, this positioning will be slightly off.
-        # A more robust solution would pass cell dimensions or calculate based on grid_tensor size and gaps.
-        H_cell = grid_pil.height // grid_rows
-        W_cell = grid_pil.width // grid_cols
-        logger.debug(f"Estimated cell size for label positioning: {H_cell}H x {W_cell}W")
+        # Calculate actual cell height/width considering gaps
+        # Total height/width without gaps = grid_pil.height/width
+        # Total height = (H_cell * grid_rows) + (row_gap * (grid_rows - 1))
+        # Total width = (W_cell * grid_cols) + (col_gap * (grid_cols - 1))
+        H_cell = (grid_pil.height - max(0, row_gap * (grid_rows - 1))) // grid_rows
+        W_cell = (grid_pil.width - max(0, col_gap * (grid_cols - 1))) // grid_cols
+        logger.debug(f"Calculated cell size for label positioning (considering gaps): {H_cell}H x {W_cell}W")
 
         # Draw Y-axis labels (Rows) - Placed to the left
-        current_y_pos = top_padding # Starting Y position for the first cell's top edge
         if y_axis_label: # Draw single overall label centered vertically
              bbox = draw.textbbox((0, 0), y_axis_label, font=font)
              label_h = bbox[3] - bbox[1]
@@ -350,17 +350,16 @@ def draw_labels_on_grid(
                   bbox = draw.textbbox((0, 0), label, font=font)
                   label_h = bbox[3] - bbox[1]
                   label_w = bbox[2] - bbox[0]
-                  # Calculate vertical center of the current cell
-                  cell_center_y = current_y_pos + (H_cell // 2)
+                  # Calculate vertical center of the current row's image area
+                  cell_center_y = top_padding + r_idx * (H_cell + row_gap) + (H_cell // 2)
                   text_y = cell_center_y - (label_h // 2)
                   # Right-align text within the left padding area
                   text_x = max(5, left_padding - label_w - 5) # 5px margin from grid edge
                   draw.text((text_x, text_y), label, fill=text_color, font=font)
                   logger.debug(f"Drawing Y label '{label}' for row {r_idx} at ({text_x}, {text_y})")
-                  current_y_pos += H_cell # Move to next row's estimated top edge
+                  # No need to track current_y_pos anymore
 
         # Draw X-axis labels (Columns) - Placed at the top
-        current_x_pos = left_padding # Starting X position for the first cell's left edge
         if x_axis_label: # Draw single overall label centered horizontally
              bbox = draw.textbbox((0, 0), x_axis_label, font=font)
              label_w = bbox[2] - bbox[0]
@@ -375,14 +374,14 @@ def draw_labels_on_grid(
                   bbox = draw.textbbox((0, 0), label, font=font)
                   label_w = bbox[2] - bbox[0]
                   label_h = bbox[3] - bbox[1]
-                  # Calculate horizontal center of the current cell
-                  cell_center_x = current_x_pos + (W_cell // 2)
+                  # Calculate horizontal center of the current column's image area
+                  cell_center_x = left_padding + c_idx * (W_cell + col_gap) + (W_cell // 2)
                   text_x = cell_center_x - (label_w // 2)
                   # Position text vertically centered within the top padding
                   text_y = max(5, (top_padding - label_h) // 2)
                   draw.text((text_x, text_y), label, fill=text_color, font=font)
                   logger.debug(f"Drawing X label '{label}' for col {c_idx} at ({text_x}, {text_y})")
-                  current_x_pos += W_cell # Move to next col's estimated left edge
+                  # No need to track current_x_pos anymore
 
         # --- Convert Labeled Image Back to Tensor ---
         logger.debug("Converting labeled PIL image back to tensor...")
