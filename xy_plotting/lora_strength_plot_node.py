@@ -1,5 +1,6 @@
 """
 Node implementation for generating an XY plot comparing LoRA models vs. strength.
+Refactored for memory efficiency and direct model/clip/vae inputs.
 """
 import torch
 import numpy as np
@@ -7,9 +8,9 @@ import os
 import comfy.sd
 import comfy.utils
 import comfy.samplers
+import comfy.model_management # Added for memory management
 import folder_paths
 from PIL import Image # Needed for saving individual images
-import math # Not used currently, consider removing if unused after refactor
 from datetime import datetime
 import re # For cleaning paths
 import logging
@@ -17,65 +18,41 @@ from typing import Dict, Any, Tuple, Optional, List, Union, Sequence, TypeAlias
 
 # Import grid assembly functions
 try:
-    from .grid_assembly import assemble_image_grid, draw_labels_on_grid
+    # Only need draw_labels_on_grid now
+    from .grid_assembly import draw_labels_on_grid
 except ImportError:
-    # Define dummy functions if import fails, though this indicates a setup issue
-    logging.basicConfig(level=logging.INFO) # Ensure basicConfig is called if logger used early
-    logging.error("Failed to import grid_assembly functions. Grid generation will fail.")
-    def assemble_image_grid(*args: Any, **kwargs: Any) -> torch.Tensor: raise RuntimeError("grid_assembly not found")
+    logging.basicConfig(level=logging.INFO)
+    logging.error("Failed to import draw_labels_on_grid from grid_assembly. Label drawing will fail.")
     def draw_labels_on_grid(*args: Any, **kwargs: Any) -> torch.Tensor: raise RuntimeError("grid_assembly not found")
 
-# Setup logger for this module
-# Use __name__ for hierarchical logging (e.g., 'xy_plotting.lora_strength_plot_node')
+# Setup logger
 logger = logging.getLogger(__name__)
-# Ensure handler is configured if running standalone or if root logger isn't set up
 if not logging.getLogger().hasHandlers():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-
-# Define type hints for complex ComfyUI types for better readability
-# These are placeholders; more specific types might be possible but complex
+# Define type hints
 ComfyConditioningT: TypeAlias = List[Tuple[torch.Tensor, Dict[str, Any]]]
-ComfyCLIPObjectT: TypeAlias = Any # Placeholder for the CLIP object structure
-ComfyVAEObjectT: TypeAlias = Any # Placeholder for the VAE object structure
-ComfyModelObjectT: TypeAlias = Any # Placeholder for the ModelPatcher object structure
-ComfyLatentT: TypeAlias = Dict[str, torch.Tensor] # Standard latent format { "samples": tensor }
+ComfyCLIPObjectT: TypeAlias = Any
+ComfyVAEObjectT: TypeAlias = Any
+ComfyModelObjectT: TypeAlias = Any
+ComfyLatentT: TypeAlias = Dict[str, torch.Tensor]
+LoadedLoraT: TypeAlias = Optional[Dict[str, torch.Tensor]] # Type for pre-loaded LoRA tensors
 
 class LoraStrengthXYPlot:
     """
     Generates an XY plot grid comparing different LoRAs (X-axis)
-    against varying model strengths (Y-axis).
+    against varying model strengths (Y-axis), using provided models.
 
-    Iterates through selected LoRAs and strength values, generates an image
-    for each combination using a base workflow, and assembles the results
-    into a single grid image with optional labels. This node helps visualize
-    the impact of different LoRAs and their strengths on the final image.
+    Optimized to pre-load LoRAs and assemble the grid directly on the GPU
+    to reduce peak memory usage.
     """
     CATEGORY = "👽 Divergent Nodes/XY Plots"
-    OUTPUT_NODE = True # This node produces a final output image
+    OUTPUT_NODE = True
 
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Dict[str, Any]]:
-        """
-        Defines the input types for the ComfyUI node interface.
-
-        Dynamically fetches available checkpoints, samplers, and schedulers.
-        Provides inputs for model selection, LoRA path, conditioning, latent,
-        sampling parameters, grid dimensions, and output options.
-
-        Returns:
-            Dict[str, Dict[str, Any]]: A dictionary defining required and optional inputs.
-        """
-        # --- Dynamic Lists ---
-        try:
-            checkpoint_list = folder_paths.get_filename_list("checkpoints")
-            if not checkpoint_list:
-                logger.warning("No checkpoints found in checkpoints directory.")
-                checkpoint_list = ["ERROR: No Checkpoints Found"]
-        except Exception as e:
-            logger.error(f"Failed to get checkpoint list: {e}", exc_info=True)
-            checkpoint_list = ["ERROR: Failed to Load"]
-
+        """Defines the input types for the ComfyUI node interface."""
+        # --- Dynamic Lists (Samplers/Schedulers only) ---
         try:
             sampler_list = comfy.samplers.KSampler.SAMPLERS
             if not sampler_list: sampler_list = ["ERROR: No Samplers Found"]
@@ -93,7 +70,11 @@ class LoraStrengthXYPlot:
         # --- Input Definitions ---
         return {
             "required": {
-                "checkpoint_name": (checkpoint_list, {"tooltip": "Base model checkpoint to use."}),
+                # Direct model inputs
+                "model": ("MODEL", {"tooltip": "Input model."}),
+                "clip": ("CLIP", {"tooltip": "Input CLIP model."}),
+                "vae": ("VAE", {"tooltip": "Input VAE model."}),
+                # LoRA and Plotting Params
                 "lora_folder_path": ("STRING", {"default": "loras/", "multiline": False, "tooltip": "Path to the folder containing LoRA files (relative to ComfyUI/models/loras or absolute)."}),
                 "positive": ("CONDITIONING", {"tooltip": "Positive conditioning."}),
                 "negative": ("CONDITIONING", {"tooltip": "Negative conditioning."}),
@@ -108,8 +89,7 @@ class LoraStrengthXYPlot:
                 "max_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.01, "tooltip": "Maximum LoRA strength for Y-axis."}),
             },
             "optional": {
-                "opt_clip": ("CLIP", {"tooltip": "Optional override CLIP model."}),
-                "opt_vae": ("VAE", {"tooltip": "Optional override VAE model."}),
+                # Output/Display Options
                 "save_individual_images": ("BOOLEAN", {"default": False, "tooltip": "Save each generated grid cell image individually."}),
                 "output_folder_name": ("STRING", {"default": "XYPlot_LoRA-Strength", "multiline": False, "tooltip": "Subfolder name within ComfyUI output directory for saved images."}),
                 "row_gap": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1, "tooltip": "Gap between rows in the final grid (pixels)."}),
@@ -128,146 +108,41 @@ class LoraStrengthXYPlot:
     # Helper Methods for Setup and Validation
     # --------------------------------------------------------------------------
     def _validate_inputs(self, lora_folder_path: str) -> str:
-        """
-        Validates the LoRA folder path input, resolving relative paths if possible.
-
-        Strips surrounding quotes/spaces, checks if it's a directory, tries to
-        resolve relative to the standard 'loras' folder, and finally checks
-        if it's an existing absolute path.
-
-        Args:
-            lora_folder_path (str): The input path string from the node interface.
-
-        Returns:
-            str: The validated, absolute path to the LoRA folder.
-
-        Raises:
-            ValueError: If the path is invalid or not a directory after checks.
-        """
+        """Validates the LoRA folder path input."""
         logger.debug(f"Validating LoRA folder path input: '{lora_folder_path}'")
         clean_path = lora_folder_path.strip('\'" ')
-
-        # 1. Check if the cleaned path is already a valid directory
         if os.path.isdir(clean_path):
-            logger.debug(f"Path '{clean_path}' is already a valid directory.")
-            # Ensure it's absolute for consistency, though isdir implies it likely is if not empty
             return os.path.abspath(clean_path)
-
-        # 2. Try resolving relative to the standard 'loras' folder
         try:
             abs_lora_path = folder_paths.get_full_path("loras", clean_path)
             if abs_lora_path and os.path.isdir(abs_lora_path):
                 logger.info(f"Resolved relative LoRA path '{clean_path}' to: {abs_lora_path}")
                 return abs_lora_path
-            else:
-                logger.debug(f"Path '{clean_path}' not found relative to loras directory.")
         except Exception as e:
             logger.warning(f"Error resolving path relative to loras folder: {e}", exc_info=True)
-
-        # 3. Check if it's an absolute path that exists (redundant if #1 passed, but safe)
         if os.path.isabs(clean_path) and os.path.isdir(clean_path):
-             logger.debug(f"Path '{clean_path}' is an existing absolute directory.")
-             return clean_path # Already absolute
-
-        # 4. If all checks fail, raise an error
+             return clean_path
         error_msg = f"LoRA folder path is not a valid directory: '{lora_folder_path}' (Checked: '{clean_path}')"
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    def _load_base_models(self,
-                          checkpoint_name: str,
-                          opt_clip: Optional[ComfyCLIPObjectT],
-                          opt_vae: Optional[ComfyVAEObjectT]
-                          ) -> Tuple[ComfyModelObjectT, ComfyCLIPObjectT, ComfyVAEObjectT]:
-        """
-        Loads the base checkpoint model, CLIP, and VAE.
-
-        Handles optional overrides for CLIP and VAE provided via node inputs.
-        Uses comfy.sd.load_checkpoint_guess_config for robust loading.
-
-        Args:
-            checkpoint_name (str): Name of the checkpoint file (e.g., "model.safetensors").
-            opt_clip (Optional[ComfyCLIPObjectT]): Optional override CLIP model object.
-            opt_vae (Optional[ComfyVAEObjectT]): Optional override VAE model object.
-
-        Returns:
-            Tuple[ComfyModelObjectT, ComfyCLIPObjectT, ComfyVAEObjectT]: Loaded model, CLIP, and VAE.
-
-        Raises:
-            FileNotFoundError: If the specified checkpoint file cannot be found.
-            ValueError: If the final CLIP or VAE object is None after loading/overriding.
-            Exception: For other unexpected errors during model loading.
-        """
-        logger.info(f"Loading base checkpoint: {checkpoint_name}")
-        try:
-            ckpt_path = folder_paths.get_full_path("checkpoints", checkpoint_name)
-            if not ckpt_path or not os.path.exists(ckpt_path):
-                logger.error(f"Checkpoint file not found at resolved path for: {checkpoint_name}")
-                raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_name}")
-
-            logger.debug(f"Loading from checkpoint path: {ckpt_path}")
-            # Use guess_config for robustness against different checkpoint formats
-            loaded_model, loaded_clip, loaded_vae = comfy.sd.load_checkpoint_guess_config(
-                ckpt_path, output_vae=True, output_clip=True,
-                embedding_directory=folder_paths.get_folder_paths("embeddings")
-            )
-
-            # Apply overrides if provided
-            model: ComfyModelObjectT = loaded_model
-            clip: ComfyCLIPObjectT = opt_clip if opt_clip is not None else loaded_clip
-            vae: ComfyVAEObjectT = opt_vae if opt_vae is not None else loaded_vae
-
-            # Validate final models
-            if model is None:
-                 # This case should be unlikely if load_checkpoint_guess_config succeeds
-                 raise ValueError("Base model failed to load from checkpoint.")
-            if clip is None:
-                raise ValueError("CLIP model could not be loaded from checkpoint or provided via input.")
-            if vae is None:
-                raise ValueError("VAE model could not be loaded from checkpoint or provided via input.")
-
-            logger.info("Base models (Model, CLIP, VAE) loaded successfully.")
-            return model, clip, vae
-
-        except FileNotFoundError: # Re-raise specifically
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error loading base models for checkpoint '{checkpoint_name}': {e}", exc_info=True)
-            # Re-raise to halt execution, providing context
-            raise RuntimeError(f"Failed to load base models from checkpoint '{checkpoint_name}'. See logs for details.") from e
-
     def _get_lora_files(self, lora_folder_path: str) -> List[str]:
-        """
-        Scans the specified directory for valid LoRA filenames (.safetensors, .pt, .ckpt, .pth).
-
-        Args:
-            lora_folder_path (str): The absolute path to the validated LoRA directory.
-
-        Returns:
-            List[str]: A sorted list of valid LoRA filenames found. Returns empty list if none found.
-
-        Raises:
-            ValueError: If the directory cannot be read due to permissions or other OS errors.
-        """
+        """Scans the directory for valid LoRA filenames."""
         logger.info(f"Scanning for LoRA files in: {lora_folder_path}")
         try:
             all_files = os.listdir(lora_folder_path)
         except OSError as e:
             logger.error(f"Could not read LoRA folder path: {lora_folder_path}. Check permissions.", exc_info=True)
-            # Raise a more specific error for clarity
             raise ValueError(f"Could not read LoRA folder path: {lora_folder_path}. Error: {e}") from e
-
         valid_extensions = ('.safetensors', '.pt', '.ckpt', '.pth')
         lora_files = sorted([
             f for f in all_files
             if os.path.isfile(os.path.join(lora_folder_path, f)) and f.lower().endswith(valid_extensions)
         ])
-
         if not lora_files:
             logger.warning(f"No valid LoRA files found in {lora_folder_path}")
         else:
             logger.info(f"Found {len(lora_files)} potential LoRA files.")
-            logger.debug(f"LoRA files found: {lora_files}")
         return lora_files
 
     def _determine_plot_axes(self,
@@ -276,209 +151,95 @@ class LoraStrengthXYPlot:
                              y_strength_steps: int,
                              max_strength: float
                              ) -> Tuple[List[str], List[float]]:
-        """
-        Determines the items (LoRAs and strengths) for the plot axes based on step inputs.
-
-        Handles selection of LoRAs for the X-axis (all, last, or sampled) and
-        calculates evenly spaced strength values for the Y-axis.
-
-        Args:
-            lora_files (List[str]): List of available LoRA filenames from _get_lora_files.
-            x_lora_steps (int): Number of LoRAs to select for the X-axis (0 means all).
-            y_strength_steps (int): Number of strength steps for the Y-axis (min 1).
-            max_strength (float): The maximum strength value for the Y-axis.
-
-        Returns:
-            Tuple[List[str], List[float]]:
-            - plot_loras: List of LoRA names (including "No LoRA") for the X-axis.
-            - plot_strengths: List of strength values for the Y-axis.
-        """
+        """Determines the items (LoRAs and strengths) for the plot axes."""
         # --- X-Axis (LoRAs) ---
-        plot_loras: List[str] = ["No LoRA"] # Always include a baseline column without any LoRA
+        plot_loras: List[str] = ["No LoRA"]
         num_available_loras: int = len(lora_files)
-        logger.debug(f"Determining X-axis: {num_available_loras} available LoRAs, requested steps: {x_lora_steps}")
-
         if num_available_loras > 0:
-            if x_lora_steps == 0: # Use all found LoRAs
-                logger.debug("X-axis: Using all available LoRAs.")
+            if x_lora_steps == 0:
                 plot_loras.extend(lora_files)
-            elif x_lora_steps == 1: # Use only the last LoRA found (alphabetically)
-                 logger.debug("X-axis: Using only the last available LoRA.")
-                 plot_loras.append(lora_files[-1]) # Use last element from sorted list
-            elif x_lora_steps > 1: # Sample LoRAs evenly
-                if x_lora_steps >= num_available_loras: # If steps >= files, use all
-                     logger.debug(f"X-axis: Requested steps ({x_lora_steps}) >= available ({num_available_loras}), using all.")
+            elif x_lora_steps == 1:
+                 plot_loras.append(lora_files[-1])
+            elif x_lora_steps > 1:
+                if x_lora_steps >= num_available_loras:
                      plot_loras.extend(lora_files)
                 else:
-                    # Calculate indices for even spread, ensuring first and last are included if possible
-                    # We want x_lora_steps points *total* on the axis *after* "No LoRA"
-                    num_loras_to_select = x_lora_steps
-                    logger.debug(f"X-axis: Sampling {num_loras_to_select} LoRAs evenly.")
-                    # np.linspace generates evenly spaced points including endpoints
-                    indices = np.linspace(0, num_available_loras - 1, num=num_loras_to_select, dtype=int)
-                    # Ensure uniqueness and sort (linspace should already be sorted)
+                    indices = np.linspace(0, num_available_loras - 1, num=x_lora_steps, dtype=int)
                     unique_indices = sorted(list(set(indices)))
-                    logger.debug(f"Calculated indices for LoRA selection: {unique_indices}")
                     for i in unique_indices:
-                        if 0 <= i < num_available_loras: # Double check bounds
+                        if 0 <= i < num_available_loras:
                             plot_loras.append(lora_files[i])
-                        else:
-                             logger.warning(f"Calculated LoRA index {i} out of bounds (0-{num_available_loras-1}). Skipping.")
-
         # --- Y-Axis (Strengths) ---
-        num_strength_points = max(1, y_strength_steps) # Ensure at least one strength value
-        logger.debug(f"Determining Y-axis: {num_strength_points} strength steps up to max {max_strength}")
-
+        num_strength_points = max(1, y_strength_steps)
         if num_strength_points == 1:
             plot_strengths: List[float] = [max_strength]
         else:
-            # Generate points evenly spaced from (max_strength / num_strength_points) up to max_strength
-            # Example: steps=3, max=1.0 -> [0.333, 0.666, 1.0]
             plot_strengths = [ (i / num_strength_points) * max_strength for i in range(1, num_strength_points + 1) ]
-
-        # Final log of determined axes
         logger.info(f"Determined Grid Dimensions: {len(plot_strengths)} rows (Strengths), {len(plot_loras)} columns (LoRAs)")
         logger.debug(f"LoRAs to plot (X-axis): {plot_loras}")
-        logger.debug(f"Strengths to plot (Y-axis): {[f'{s:.4f}' for s in plot_strengths]}") # More precision for debug
+        logger.debug(f"Strengths to plot (Y-axis): {[f'{s:.4f}' for s in plot_strengths]}")
         return plot_loras, plot_strengths
 
+    def _preload_loras(self, lora_names: List[str], lora_folder_path: str) -> Dict[str, LoadedLoraT]:
+        """Loads LoRA tensors from disk into memory."""
+        loaded_loras: Dict[str, LoadedLoraT] = {}
+        logger.info("Pre-loading LoRA files...")
+        for name in lora_names:
+            if name == "No LoRA":
+                loaded_loras[name] = None # Placeholder for no LoRA
+                continue
+            lora_path = os.path.join(lora_folder_path, name)
+            if not os.path.exists(lora_path):
+                logger.warning(f"  LoRA file not found during pre-load: {lora_path}. Will skip.")
+                loaded_loras[name] = None
+                continue
+            try:
+                logger.debug(f"  Loading LoRA: {name}")
+                # safe_load=True is important
+                lora_tensor = comfy.utils.load_torch_file(lora_path, safe_load=True)
+                loaded_loras[name] = lora_tensor
+                logger.debug(f"  Successfully loaded LoRA: {name}")
+            except Exception as e:
+                logger.warning(f"  Failed to pre-load LoRA '{name}'. Will skip. Error: {e}", exc_info=True)
+                loaded_loras[name] = None # Mark as failed to load
+        logger.info("LoRA pre-loading complete.")
+        return loaded_loras
+
     def _setup_output_directory(self, output_folder_name: str) -> Optional[str]:
-        """
-        Creates the output directory structure for saving individual plot images.
-
-        Generates a base folder and a run-specific subfolder with a timestamp.
-
-        Args:
-            output_folder_name (str): The base name for the output folder (will be sanitized).
-
-        Returns:
-            Optional[str]: The absolute path to the created run-specific folder,
-                           or None if creation fails.
-        """
+        """Creates the output directory structure."""
         try:
             output_path = folder_paths.get_output_directory()
-            # Sanitize the user-provided folder name to remove invalid characters
-            safe_folder_name = re.sub(r'[\\/*?:"<>|]', '_', output_folder_name)
-            safe_folder_name = safe_folder_name.strip() # Remove leading/trailing whitespace
-            if not safe_folder_name: # Handle empty name after sanitization
-                safe_folder_name = "XYPlot_Output"
-                logger.warning(f"Output folder name was empty or invalid, using default: '{safe_folder_name}'")
-
+            safe_folder_name = re.sub(r'[\\/*?:"<>|]', '_', output_folder_name).strip()
+            if not safe_folder_name: safe_folder_name = "XYPlot_Output"
             base_output_folder = os.path.join(output_path, safe_folder_name)
-            # Create a unique subfolder for each run using a timestamp
             run_folder = os.path.join(base_output_folder, f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-
-            os.makedirs(run_folder, exist_ok=True) # Create base and run folder
+            os.makedirs(run_folder, exist_ok=True)
             logger.info(f"Output directory for individual images prepared: {run_folder}")
             return run_folder
-        except OSError as e:
-            logger.warning(f"Could not create output directory '{run_folder}'. OS Error: {e}. Disabling saving.", exc_info=True)
-            return None
-        except Exception as e: # Catch other potential errors like permission issues
-             logger.error(f"Unexpected error setting up output directory '{output_folder_name}'.", exc_info=True)
+        except Exception as e:
+             logger.error(f"Error setting up output directory '{output_folder_name}': {e}", exc_info=True)
              return None
 
     # --------------------------------------------------------------------------
-    # Core Image Generation Logic - Decomposed Helpers
+    # Core Image Generation Logic
     # --------------------------------------------------------------------------
-    def _apply_lora_to_models(self,
-                              model: ComfyModelObjectT,
-                              clip: ComfyCLIPObjectT,
-                              lora_name: str,
-                              strength: float,
-                              lora_folder_path: str
-                              ) -> Tuple[ComfyModelObjectT, ComfyCLIPObjectT, str]:
-        """
-        Applies a specific LoRA to cloned model and CLIP objects.
-
-        Args:
-            model (ComfyModelObjectT): The base model object (will be cloned).
-            clip (ComfyCLIPObjectT): The base CLIP object (will be cloned).
-            lora_name (str): Filename of the LoRA to apply.
-            strength (float): Strength to apply the LoRA.
-            lora_folder_path (str): Validated path to the LoRA directory.
-
-        Returns:
-            Tuple[ComfyModelObjectT, ComfyCLIPObjectT, str]:
-                - The model with LoRA applied (or original if failed).
-                - The CLIP with LoRA applied (or original if failed).
-                - A sanitized filename part derived from the LoRA name.
-        """
-        current_model = model.clone()
-        current_clip = clip.clone()
-        lora_filename_part = os.path.splitext(lora_name)[0] # Use filename without ext for saving
-
-        lora_path = os.path.join(lora_folder_path, lora_name)
-        if not os.path.exists(lora_path):
-            logger.warning(f"  LoRA file not found: {lora_path}. Skipping application.")
-            return current_model, current_clip, lora_filename_part # Return originals
-
-        try:
-            logger.info(f"  Applying LoRA: {lora_name} with strength {strength:.3f}")
-            # safe_load=True is important for security
-            lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
-            current_model, current_clip = comfy.sd.load_lora_for_models(
-                current_model, current_clip, lora, strength, strength
-            )
-            del lora # Free memory immediately after application
-            logger.debug(f"  Successfully applied LoRA: {lora_name}")
-        except Exception as e:
-            # Log clearly but don't halt the whole plot generation for one failed LoRA
-            logger.warning(f"  Failed to load or apply LoRA '{lora_name}'. Skipping application. Error: {e}", exc_info=True)
-            # Return the original cloned models
-
-        return current_model, current_clip, lora_filename_part
-
     def _prepare_latent_for_sampling(self,
                                      base_latent: ComfyLatentT,
                                      positive_cond: ComfyConditioningT
                                      ) -> ComfyLatentT:
-        """
-        Prepares the latent dictionary for sampling.
-
-        Ensures the latent is in the correct format (dict with "samples") and
-        handles potential batch size mismatches between latent and conditioning
-        by repeating the latent if necessary.
-
-        Args:
-            base_latent (ComfyLatentT): The initial latent dictionary.
-            positive_cond (ComfyConditioningT): The positive conditioning list.
-
-        Returns:
-            ComfyLatentT: The prepared latent dictionary, potentially with repeated samples.
-
-        Raises:
-            TypeError: If the base_latent format is invalid.
-        """
-        current_latent = base_latent.copy() # Work on a copy
-
+        """Prepares the latent dictionary for sampling, handling batch size."""
+        current_latent = base_latent.copy()
         if not isinstance(current_latent, dict) or "samples" not in current_latent:
-            msg = f"Invalid latent_image format: {type(base_latent)}. Expected dict with 'samples'."
-            logger.error(msg)
-            raise TypeError(msg)
-
+            raise TypeError(f"Invalid latent_image format: {type(base_latent)}. Expected dict with 'samples'.")
         latent_samples = current_latent['samples']
         latent_batch_size = latent_samples.shape[0]
-
-        # Determine conditioning batch size (can be complex, this is a basic check)
-        cond_batch_size = 1
-        if isinstance(positive_cond, list) and positive_cond:
-             # Assuming standard format: List[Tuple[Tensor, Dict]]
-             # A more robust check might be needed depending on custom conditioning formats
-             cond_batch_size = len(positive_cond)
-
-        logger.debug(f"  Latent batch size: {latent_batch_size}, Conditioning batch size: {cond_batch_size}")
-
+        cond_batch_size = len(positive_cond) if isinstance(positive_cond, list) else 1
         if latent_batch_size != cond_batch_size:
             if latent_batch_size == 1 and cond_batch_size > 1:
-                # Common case: single latent, multiple conds (e.g., from area composition)
-                logger.warning(f"  Latent batch (1) != Cond batch ({cond_batch_size}). Repeating latent sample to match.")
+                logger.warning(f"  Latent batch (1) != Cond batch ({cond_batch_size}). Repeating latent sample.")
                 current_latent['samples'] = latent_samples.repeat(cond_batch_size, 1, 1, 1)
             else:
-                # Less common, might indicate an issue upstream or require specific handling
-                logger.warning(f"  Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Proceeding, but mismatch might cause sampler errors.")
-                # Sampler might handle this, or it might error. No change made here.
-
+                logger.warning(f"  Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Mismatch might cause errors.")
         return current_latent
 
     def _run_sampling_and_decode(self,
@@ -494,48 +255,25 @@ class LoraStrengthXYPlot:
                                  sampler_name: str,
                                  scheduler: str
                                  ) -> torch.Tensor:
-        """
-        Performs the core sampling and VAE decoding.
-
-        Args:
-            model, clip, vae: The models to use for this step.
-            positive, negative: Conditioning tensors.
-            latent: Prepared latent dictionary.
-            seed, steps, cfg, sampler_name, scheduler: Sampling parameters.
-
-        Returns:
-            torch.Tensor: The generated image tensor [B, H, W, C].
-
-        Raises:
-            ValueError: If sampler output is missing 'samples'.
-            RuntimeError: If sampling or decoding fails unexpectedly.
-        """
+        """Performs sampling and VAE decoding."""
         logger.debug(f"  Starting sampling: {sampler_name}/{scheduler}, Steps: {steps}, CFG: {cfg}, Seed: {seed}")
         try:
             samples_latent = comfy.sample.sample(
                 model, clip, vae, positive, negative, latent,
                 seed=seed, steps=steps, cfg=cfg,
                 sampler_name=sampler_name, scheduler=scheduler,
-                denoise=1.0 # Standard full denoise for XY plot from latent
+                denoise=1.0
             )
-
             if not isinstance(samples_latent, dict) or "samples" not in samples_latent:
-                raise ValueError("Sampler output was not a dict or missing 'samples' key.")
-
-            logger.debug("  Sampling complete. Decoding samples...")
-            # Decode latent samples to image tensor
-            # vae.decode expects [B, C, H_latent, W_latent]
-            img_tensor_chw = vae.decode(samples_latent["samples"]) # Output: [B, C, H, W]
-            logger.debug(f"  Decoding complete. Output shape: {img_tensor_chw.shape}")
-
-            # Convert to channels-last format [B, H, W, C] for consistency
-            img_tensor_bhwc = img_tensor_chw.permute(0, 2, 3, 1)
+                raise ValueError("Sampler output missing 'samples' key.")
+            logger.debug("  Sampling complete. Decoding...")
+            img_tensor_chw = vae.decode(samples_latent["samples"]) # [B, C, H, W]
+            logger.debug(f"  Decoding complete. Shape: {img_tensor_chw.shape}")
+            img_tensor_bhwc = img_tensor_chw.permute(0, 2, 3, 1) # [B, H, W, C]
             return img_tensor_bhwc
-
         except Exception as e:
             logger.error(f"  Error during sampling or decoding: {e}", exc_info=True)
             raise RuntimeError("Sampling or VAE Decoding failed.") from e
-
 
     def _save_image_if_enabled(self,
                                image_tensor_bhwc: torch.Tensor,
@@ -546,56 +284,29 @@ class LoraStrengthXYPlot:
                                col_idx: int,
                                lora_filename_part: str,
                                strength: float):
-        """
-        Saves the generated image to disk if enabled and path is valid.
-
-        Args:
-            image_tensor_bhwc: The generated image tensor [B, H, W, C].
-            run_folder: Validated output directory path.
-            save_individual_images: Flag indicating if saving is enabled.
-            img_index: Overall index for logging.
-            row_idx, col_idx: Grid position indices.
-            lora_filename_part: Sanitized LoRA name for filename.
-            strength: Strength value for filename.
-        """
-        if not (save_individual_images and run_folder):
-            return # Saving disabled or folder setup failed
-
+        """Saves the generated image to disk if enabled."""
+        if not (save_individual_images and run_folder): return
         try:
-            # Assume batch size 1 for saving individual grid cells
-            img_tensor_hwc = image_tensor_bhwc[0]
+            img_tensor_hwc = image_tensor_bhwc[0] # Assume batch 1 for saving
             img_np = img_tensor_hwc.cpu().numpy()
             img_pil = Image.fromarray(np.clip(img_np * 255.0, 0, 255).astype(np.uint8))
-
-            # Sanitize filename part (already done for LoRA, but good practice)
             safe_lora_name = re.sub(r'[\\/*?:"<>|]', '_', lora_filename_part)
             filename = f"row-{row_idx}_col-{col_idx}_lora-{safe_lora_name}_str-{strength:.3f}.png"
             filepath = os.path.join(run_folder, filename)
-
             logger.debug(f"  Saving individual image to: {filepath}")
             img_pil.save(filepath)
-            logger.info(f"  Saved individual image: {filename}")
         except Exception as e_save:
-            # Log warning but don't interrupt the whole process
             logger.warning(f"  Failed to save individual image {img_index}. Error: {e_save}", exc_info=True)
 
-
-    def _create_placeholder_image(self, base_latent: ComfyLatentT) -> torch.Tensor:
-        """Creates a black placeholder image based on latent dimensions."""
+    def _create_placeholder_image(self, H: int, W: int, C: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """Creates a black placeholder image."""
         try:
-            latent_shape = base_latent['samples'].shape # [B, C, H_latent, W_latent]
-            # Estimate image size (standard SD scaling factor)
-            H_img = latent_shape[2] * 8
-            W_img = latent_shape[3] * 8
-            # Create black image [H, W, C=3]
-            placeholder = torch.zeros((H_img, W_img, 3), dtype=torch.float32)
+            placeholder = torch.zeros((H, W, C), dtype=dtype, device=device)
             logger.info("  Created black placeholder image due to generation error.")
             return placeholder
         except Exception as e_placeholder:
-            logger.error(f"  Failed to create placeholder image after error: {e_placeholder}", exc_info=True)
-            # If placeholder fails, we have a bigger problem. Re-raise.
+            logger.error(f"  Failed to create placeholder image: {e_placeholder}", exc_info=True)
             raise RuntimeError("Image generation failed and placeholder creation also failed.") from e_placeholder
-
 
     def _generate_single_image(
         self,
@@ -610,101 +321,100 @@ class LoraStrengthXYPlot:
         cfg: float,
         sampler_name: str,
         scheduler: str,
-        lora_name: str,
+        loaded_lora: LoadedLoraT, # Pass pre-loaded LoRA tensor
         strength: float,
-        lora_folder_path: str,
         run_folder: Optional[str],
         save_individual_images: bool,
         img_index: int,
-        total_images: int,
-        plot_loras: List[str] # Needed for saving filename logic
+        row_idx: int, # Pass grid indices for saving
+        col_idx: int,
+        lora_filename_part: str # Pass filename part for saving
     ) -> torch.Tensor:
         """
-        Generates a single image tile for the XY plot grid.
-
-        Orchestrates LoRA application, latent prep, sampling, decoding,
-        optional saving, and error handling for one grid cell.
-
-        Args:
-            base_model, base_clip, base_vae: Base models (will be cloned).
-            positive, negative: Conditioning data.
-            base_latent: Initial latent dictionary.
-            seed, steps, cfg, sampler_name, scheduler: Sampling parameters.
-            lora_name (str): Filename of the LoRA to apply ("No LoRA" for baseline).
-            strength (float): Strength to apply the LoRA.
-            lora_folder_path (str): Path to the LoRA directory.
-            run_folder (Optional[str]): Directory to save individual images.
-            save_individual_images (bool): Whether to save individual images.
-            img_index (int): Current image index (1-based) for logging/seed offset.
-            total_images (int): Total number of images in the grid for logging.
-            plot_loras (List[str]): List of LoRAs being plotted (for filename).
-
-        Returns:
-            torch.Tensor: The generated image tensor [H, W, C]. Returns a black
-                          placeholder tensor on error during generation.
+        Generates a single image tile using pre-loaded LoRA.
+        Returns tensor [H, W, C].
         """
-        logger.info(f"\nGenerating image {img_index}/{total_images} (LoRA: '{lora_name}', Strength: {strength:.3f})")
+        logger.info(f"\nGenerating image {img_index} (LoRA: '{lora_filename_part}', Strength: {strength:.3f})")
         img_tensor_hwc: Optional[torch.Tensor] = None
         current_model = None
         current_clip = None
 
         try:
-            # 1. Apply LoRA (if specified)
-            lora_filename_part = "NoLoRA"
-            if lora_name != "No LoRA":
-                current_model, current_clip, lora_filename_part = self._apply_lora_to_models(
-                    base_model, base_clip, lora_name, strength, lora_folder_path
-                )
-            else:
-                # Still need clones even if no LoRA is applied
-                current_model = base_model.clone()
-                current_clip = base_clip.clone()
-                logger.debug("  Skipping LoRA application (baseline image).")
+            # 1. Clone base models
+            current_model = base_model.clone()
+            current_clip = base_clip.clone()
 
-            # 2. Prepare Latent
+            # 2. Apply LoRA (if pre-loaded)
+            if loaded_lora is not None:
+                logger.debug(f"  Applying pre-loaded LoRA: {lora_filename_part} with strength {strength:.3f}")
+                try:
+                    current_model, current_clip = comfy.sd.load_lora_for_models(
+                        current_model, current_clip, loaded_lora, strength, strength
+                    )
+                    logger.debug(f"  Successfully applied pre-loaded LoRA: {lora_filename_part}")
+                except Exception as e_apply:
+                    logger.warning(f"  Failed to apply pre-loaded LoRA '{lora_filename_part}'. Skipping. Error: {e_apply}", exc_info=True)
+                    # Continue with the cloned base models if application fails
+            else:
+                logger.debug(f"  Skipping LoRA application ('{lora_filename_part}' not loaded or is baseline).")
+
+            # 3. Prepare Latent
             current_latent = self._prepare_latent_for_sampling(base_latent, positive)
 
-            # 3. Run Sampling and Decode
+            # 4. Run Sampling and Decode
             image_tensor_bhwc = self._run_sampling_and_decode(
                 current_model, current_clip, base_vae, positive, negative, current_latent,
                 seed + img_index - 1, # Increment seed per image
                 steps, cfg, sampler_name, scheduler
             )
-            # Extract single image (assuming batch size 1 for grid cell)
-            # If batch size > 1 due to latent/cond mismatch, we still take the first.
+
+            # Extract single image [H, W, C]
             if image_tensor_bhwc.shape[0] > 1:
-                 logger.warning(f"  Sampler returned batch size {image_tensor_bhwc.shape[0]}, using only the first image for the grid.")
+                 logger.warning(f"  Sampler returned batch size {image_tensor_bhwc.shape[0]}, using only the first image.")
             img_tensor_hwc = image_tensor_bhwc[0]
 
-
-            # 4. Save Individual Image (Optional)
-            row_idx = (img_index - 1) // len(plot_loras)
-            col_idx = (img_index - 1) % len(plot_loras)
+            # 5. Save Individual Image (Optional)
             self._save_image_if_enabled(
                 image_tensor_bhwc, run_folder, save_individual_images,
                 img_index, row_idx, col_idx, lora_filename_part, strength
             )
 
         except Exception as e_generate:
-            logger.error(f"  ERROR generating image {img_index} (LoRA: '{lora_name}', Str: {strength:.3f}). Error: {e_generate}", exc_info=True)
-            # Create placeholder on any generation error
-            img_tensor_hwc = self._create_placeholder_image(base_latent)
+            logger.error(f"  ERROR generating image {img_index} (LoRA: '{lora_filename_part}', Str: {strength:.3f}). Error: {e_generate}", exc_info=True)
+            # Need H, W, C etc. to create placeholder - try getting from latent
+            try:
+                 latent_shape = base_latent['samples'].shape # [B, C, H_lat, W_lat]
+                 H_img, W_img = latent_shape[2] * 8, latent_shape[3] * 8
+                 C_img = 3 # Assume RGB output
+                 device = base_model.device # Get device from model
+                 dtype = base_model.model.dtype # Get dtype from model
+                 img_tensor_hwc = self._create_placeholder_image(H_img, W_img, C_img, device, dtype)
+            except Exception as e_placeholder_fallback:
+                 logger.critical(f"  Failed to determine placeholder dimensions or create placeholder: {e_placeholder_fallback}", exc_info=True)
+                 raise RuntimeError("Failed to generate image and could not create placeholder.") from e_generate
 
         finally:
             # --- Clean up GPU Memory ---
-            # Ensure models are deleted even if errors occurred mid-process
             del current_model
             del current_clip
-            # Request garbage collection and cache clearing
-            # This helps prevent memory buildup over many iterations
-            comfy.model_management.soft_empty_cache()
-            logger.debug("  GPU memory cleanup requested.")
+            # No need to delete loaded_lora here, it's managed outside the loop
+            # Request garbage collection periodically (moved outside this func)
+            # comfy.model_management.soft_empty_cache() # Moved to main loop
+            # logger.debug("  GPU memory cleanup requested.")
 
         # Ensure we always return a valid tensor
         if img_tensor_hwc is None:
-             # This path should ideally not be hit due to error handling, but acts as a final safeguard.
              logger.error("Image tensor was unexpectedly None after generation attempt. Creating final placeholder.")
-             img_tensor_hwc = self._create_placeholder_image(base_latent)
+             # Repeat placeholder creation logic as a last resort
+             try:
+                 latent_shape = base_latent['samples'].shape
+                 H_img, W_img = latent_shape[2] * 8, latent_shape[3] * 8
+                 C_img = 3
+                 device = base_model.device
+                 dtype = base_model.model.dtype
+                 img_tensor_hwc = self._create_placeholder_image(H_img, W_img, C_img, device, dtype)
+             except Exception:
+                 raise RuntimeError("Failed to generate image and placeholder creation failed.")
 
         return img_tensor_hwc
 
@@ -713,7 +423,9 @@ class LoraStrengthXYPlot:
     # --------------------------------------------------------------------------
     def generate_plot(self,
                       # Required inputs
-                      checkpoint_name: str,
+                      model: ComfyModelObjectT, # Direct model input
+                      clip: ComfyCLIPObjectT,   # Direct clip input
+                      vae: ComfyVAEObjectT,     # Direct vae input
                       lora_folder_path: str,
                       positive: ComfyConditioningT,
                       negative: ComfyConditioningT,
@@ -727,8 +439,6 @@ class LoraStrengthXYPlot:
                       y_strength_steps: int,
                       max_strength: float,
                       # Optional inputs
-                      opt_clip: Optional[ComfyCLIPObjectT] = None,
-                      opt_vae: Optional[ComfyVAEObjectT] = None,
                       save_individual_images: bool = False,
                       output_folder_name: str = "XYPlot_LoRA-Strength",
                       row_gap: int = 0,
@@ -737,135 +447,152 @@ class LoraStrengthXYPlot:
                       x_axis_label: str = "",
                       y_axis_label: str = ""
                       ) -> Tuple[torch.Tensor]:
-        """
-        Orchestrates the entire XY plot generation process.
-
-        This is the main entry point called by ComfyUI when the node executes.
-        It performs the following steps:
-        1. Validates inputs (LoRA path).
-        2. Loads base models (Checkpoint, CLIP, VAE).
-        3. Determines the LoRAs and strengths for the plot axes.
-        4. Sets up the output directory if saving individual images.
-        5. Iterates through each grid cell (LoRA x Strength combination).
-        6. Calls `_generate_single_image` for each cell.
-        7. Assembles the generated images into a grid using `assemble_image_grid`.
-        8. Optionally draws labels on the grid using `draw_labels_on_grid`.
-        9. Returns the final grid image tensor (with batch dimension added).
-
-        Args:
-            checkpoint_name (str): Name of the base checkpoint file.
-            lora_folder_path (str): Path to the folder containing LoRA files.
-            positive (ComfyConditioningT): Positive conditioning data.
-            negative (ComfyConditioningT): Negative conditioning data.
-            latent_image (ComfyLatentT): Initial latent dictionary.
-            seed (int): Base seed for generation.
-            steps (int): Number of sampling steps.
-            cfg (float): CFG scale.
-            sampler_name (str): Name of the sampler.
-            scheduler (str): Name of the scheduler.
-            x_lora_steps (int): Number of LoRAs for X-axis.
-            y_strength_steps (int): Number of strength steps for Y-axis.
-            max_strength (float): Maximum LoRA strength for Y-axis.
-            opt_clip (Optional[ComfyCLIPObjectT]): Optional override CLIP model.
-            opt_vae (Optional[ComfyVAEObjectT]): Optional override VAE model.
-            save_individual_images (bool): Whether to save individual grid images.
-            output_folder_name (str): Subfolder name for saved images.
-            row_gap (int): Gap between rows in the final grid.
-            col_gap (int): Gap between columns in the final grid.
-            draw_labels (bool): Whether to draw labels on the grid.
-            x_axis_label (str): Optional overall label for the X-axis.
-            y_axis_label (str): Optional overall label for the Y-axis.
-
-        Returns:
-            Tuple[torch.Tensor]: A tuple containing the final XY plot image tensor
-                                 in ComfyUI's expected format [1, H, W, C].
-
-        Raises:
-            RuntimeError: If critical steps like model loading or image generation fail.
-        """
-        logger.info("--- Starting LoRA vs Strength XY Plot Generation ---")
+        """Orchestrates the XY plot generation with optimizations."""
+        logger.info("--- Starting LoRA vs Strength XY Plot Generation (Optimized) ---")
         start_time = datetime.now()
+        generation_successful = True # Track if all images generated ok
 
         try:
             # --- Setup ---
             validated_lora_path = self._validate_inputs(lora_folder_path)
-            model, clip, vae = self._load_base_models(checkpoint_name, opt_clip, opt_vae)
+            # Models (model, clip, vae) are now passed directly
             lora_files = self._get_lora_files(validated_lora_path)
             plot_loras, plot_strengths = self._determine_plot_axes(
                 lora_files, x_lora_steps, y_strength_steps, max_strength
             )
+            loaded_loras = self._preload_loras(plot_loras, validated_lora_path)
 
             num_rows = len(plot_strengths)
             num_cols = len(plot_loras)
             total_images = num_rows * num_cols
             if total_images == 0:
-                 logger.warning("Plot axes determined to have zero images. Aborting.")
-                 # Consider returning a blank image or raising a specific error
                  raise ValueError("Plot generation resulted in zero images based on inputs.")
 
             logger.info(f"Preparing to generate {total_images} images ({num_rows} rows x {num_cols} cols).")
             run_folder = self._setup_output_directory(output_folder_name) if save_individual_images else None
 
-            # --- Generation Loop ---
-            generated_images: List[torch.Tensor] = []
-            generation_successful = True # Flag to track if all images were generated
+            # --- Determine Grid Geometry & Allocate Grid Tensor ---
+            # Generate the first image to get dimensions
+            first_img_index = 1
+            first_lora_name = plot_loras[0]
+            first_strength = plot_strengths[0]
+            first_loaded_lora = loaded_loras.get(first_lora_name)
+            first_lora_filename_part = os.path.splitext(first_lora_name)[0] if first_lora_name != "No LoRA" else "NoLoRA"
+
+            logger.info("Generating first image to determine grid geometry...")
+            first_image_hwc = self._generate_single_image(
+                base_model=model, base_clip=clip, base_vae=vae,
+                positive=positive, negative=negative, base_latent=latent_image,
+                seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
+                loaded_lora=first_loaded_lora, strength=first_strength,
+                run_folder=run_folder, save_individual_images=save_individual_images,
+                img_index=first_img_index, row_idx=0, col_idx=0,
+                lora_filename_part=first_lora_filename_part
+            )
+            comfy.model_management.soft_empty_cache() # Clean up after first image
+
+            H, W, C = first_image_hwc.shape
+            dtype = first_image_hwc.dtype
+            device = first_image_hwc.device # Should be GPU if generated correctly
+            logger.info(f"Image dimensions: {H}H x {W}W x {C}C, Type: {dtype}, Device: {device}")
+
+            grid_height = H * num_rows + max(0, row_gap * (num_rows - 1))
+            grid_width = W * num_cols + max(0, col_gap * (num_cols - 1))
+            logger.info(f"Allocating final grid tensor: {grid_height}H x {grid_width}W x {C}C on device {device}")
+
+            # Allocate the full grid tensor on the target device (GPU)
+            # Initialize with a value that indicates empty/background if needed, e.g., 0 for black
+            # Using zeros like the placeholder for consistency if errors occur
+            final_grid = torch.zeros((grid_height, grid_width, C), dtype=dtype, device=device)
+
+            # Paste the first image into the grid
+            y_start, x_start = 0, 0 # Position for the first image (row 0, col 0)
+            final_grid[y_start:y_start + H, x_start:x_start + W, :] = first_image_hwc
+            del first_image_hwc # Free memory of the first image tensor
+            logger.debug("Pasted first image into grid.")
+
+            # --- Generation Loop (Optimized) ---
+            logger.info("Starting main generation loop...")
+            img_idx = 1 # Start from 1 (first image already done)
             for y_idx, strength in enumerate(plot_strengths):
+                current_row_y = y_idx * (H + row_gap)
                 for x_idx, lora_name in enumerate(plot_loras):
+                    img_idx += 1
+                    if y_idx == 0 and x_idx == 0:
+                        continue # Skip the first image, already generated and pasted
+
+                    current_col_x = x_idx * (W + col_gap)
+                    loaded_lora = loaded_loras.get(lora_name)
+                    lora_filename_part = os.path.splitext(lora_name)[0] if lora_name != "No LoRA" else "NoLoRA"
+
                     try:
-                        img_tensor = self._generate_single_image(
+                        # Generate image
+                        img_tensor_hwc = self._generate_single_image(
                             base_model=model, base_clip=clip, base_vae=vae,
                             positive=positive, negative=negative, base_latent=latent_image,
                             seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
-                            lora_name=lora_name, strength=strength, lora_folder_path=validated_lora_path,
+                            loaded_lora=loaded_lora, strength=strength,
                             run_folder=run_folder, save_individual_images=save_individual_images,
-                            img_index=(y_idx * num_cols + x_idx + 1), total_images=total_images,
-                            plot_loras=plot_loras
+                            img_index=img_idx, row_idx=y_idx, col_idx=x_idx,
+                            lora_filename_part=lora_filename_part
                         )
-                        generated_images.append(img_tensor)
+
+                        # Paste directly into the pre-allocated grid tensor
+                        final_grid[current_row_y:current_row_y + H, current_col_x:current_col_x + W, :] = img_tensor_hwc
+                        logger.debug(f"Pasted image {img_idx} into grid at ({current_row_y}, {current_col_x})")
+
+                        # Immediately delete the tensor to free memory
+                        del img_tensor_hwc
+
                     except Exception as e_inner:
-                         # Log error from _generate_single_image but continue loop
-                         # _generate_single_image should return a placeholder on error
-                         logger.error(f"Error in _generate_single_image for cell ({y_idx},{x_idx}): {e_inner}", exc_info=True)
-                         # We expect a placeholder was returned, so append it if possible
-                         # If _create_placeholder_image also failed, _generate_single_image would re-raise
-                         placeholder = self._create_placeholder_image(latent_image) # Recreate placeholder just in case
-                         generated_images.append(placeholder)
+                         logger.error(f"Error generating or pasting image {img_idx} for cell ({y_idx},{x_idx}): {e_inner}", exc_info=True)
+                         # Create placeholder and paste it
+                         placeholder = self._create_placeholder_image(H, W, C, device, dtype)
+                         final_grid[current_row_y:current_row_y + H, current_col_x:current_col_x + W, :] = placeholder
+                         del placeholder
                          generation_successful = False # Mark that at least one image failed
 
-            # --- Grid Assembly ---
-            if not generated_images:
-                # This should only happen if the loop didn't run at all (total_images was 0)
-                logger.error("No images available for grid assembly.")
-                raise RuntimeError("No images were generated or collected. Cannot create grid.")
-
-            logger.info(f"\nAssembling final image grid ({len(generated_images)} images)...")
-            # Use the imported grid assembly function
-            grid_tensor = assemble_image_grid(generated_images, num_rows, num_cols, row_gap, col_gap)
-            logger.debug(f"Grid assembled. Tensor shape: {grid_tensor.shape}")
+                    finally:
+                         # Clean up GPU memory periodically (e.g., after each image)
+                         comfy.model_management.soft_empty_cache()
 
             # --- Label Drawing ---
-            final_labeled_tensor = grid_tensor
+            final_labeled_tensor = final_grid # Start with the assembled grid
             if draw_labels:
                 logger.info("Drawing labels on grid...")
-                # Prepare labels (strip extension from LoRA names)
                 x_axis_labels = [os.path.splitext(name)[0] if name != "No LoRA" else "No LoRA" for name in plot_loras]
-                y_axis_labels = [f"{s:.3f}" for s in plot_strengths] # Format strength values
+                y_axis_labels = [f"{s:.3f}" for s in plot_strengths]
                 try:
-                    final_labeled_tensor = draw_labels_on_grid(
-                        grid_tensor, x_labels=x_axis_labels, y_labels=y_axis_labels,
+                    # Transfer grid to CPU *once* for PIL operations
+                    logger.debug("Transferring final grid to CPU for label drawing...")
+                    grid_cpu = final_labeled_tensor.cpu()
+                    # Ensure draw_labels_on_grid handles CPU tensor input correctly
+                    # (The existing implementation converts to numpy/PIL, which requires CPU)
+                    labeled_grid_cpu = draw_labels_on_grid(
+                        grid_cpu, x_labels=x_axis_labels, y_labels=y_axis_labels,
                         x_axis_label=x_axis_label, y_axis_label=y_axis_label
-                        # Pass font size, colors etc. if they become inputs later
                     )
-                    logger.debug(f"Labels drawn. Final tensor shape: {final_labeled_tensor.shape}")
+                    # Transfer back to original device if needed, though output is usually CPU->ComfyUI
+                    # Assuming ComfyUI expects CPU tensor for IMAGE output? Check this.
+                    # If ComfyUI expects GPU, transfer back: final_labeled_tensor = labeled_grid_cpu.to(device)
+                    final_labeled_tensor = labeled_grid_cpu # Keep on CPU for return
+                    logger.debug(f"Labels drawn. Final tensor shape: {final_labeled_tensor.shape}, Device: {final_labeled_tensor.device}")
                 except Exception as e_label:
                      logger.error(f"Failed to draw labels on grid: {e_label}", exc_info=True)
-                     # Proceed with the unlabeled grid if labeling fails
-                     final_labeled_tensor = grid_tensor
+                     # Return the unlabeled grid (still on CPU after transfer attempt)
+                     final_labeled_tensor = final_grid.cpu() # Ensure it's on CPU
             else:
-                 logger.info("Label drawing skipped as per input.")
+                 logger.info("Label drawing skipped.")
+                 # Ensure final tensor is on CPU for return if labels skipped
+                 final_labeled_tensor = final_grid.cpu()
+
 
             # --- Final Output ---
-            # Add batch dimension for ComfyUI output format [1, H, W, C]
+            # Add batch dimension [1, H, W, C] - ComfyUI expects this format for IMAGE output
+            # Ensure it's on CPU before unsqueezing if returning CPU tensor
+            if final_labeled_tensor.device != torch.device('cpu'):
+                 final_labeled_tensor = final_labeled_tensor.cpu() # Final safety check
+
             final_output_tensor = final_labeled_tensor.unsqueeze(0)
 
             end_time = datetime.now()
@@ -874,13 +601,17 @@ class LoraStrengthXYPlot:
             if not generation_successful:
                  logger.warning("Plot generation finished, but one or more images failed and were replaced by placeholders.")
 
+            # Clean up pre-loaded LoRAs from memory
+            del loaded_loras
+            comfy.model_management.soft_empty_cache()
+
             return (final_output_tensor,)
 
         except Exception as e:
-            # Catch errors from setup steps (validation, model load, axes determination)
             logger.critical(f"--- XY Plot: Generation FAILED due to critical error: {e} ---", exc_info=True)
-            # Re-raise the exception to make the error visible in ComfyUI
+            # Clean up any potentially loaded LoRAs on critical failure
+            if 'loaded_loras' in locals(): del loaded_loras
+            comfy.model_management.soft_empty_cache()
             raise RuntimeError(f"XY Plot generation failed: {e}") from e
-
 
 # Note: Mappings are handled in xy_plotting/__init__.py
