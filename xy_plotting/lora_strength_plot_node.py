@@ -147,16 +147,31 @@ class LoraStrengthXYPlot:
         """Performs sampling and VAE decoding."""
         logger.debug(f"  Starting sampling: {sampler_name}/{scheduler}, Steps: {steps}, CFG: {cfg}, Seed: {seed}")
         try:
+            # Use keyword arguments for clarity and correctness
             samples_latent = comfy.sample.sample(
-                model, clip, vae, positive, negative, latent,
-                seed=seed, steps=steps, cfg=cfg,
-                sampler_name=sampler_name, scheduler=scheduler,
+                model=model,
+                seed=seed,
+                steps=steps,
+                cfg=cfg,
+                sampler_name=sampler_name,
+                scheduler=scheduler,
+                positive=positive,
+                negative=negative,
+                latent=latent,
                 denoise=1.0
+                # Note: clip and vae are typically handled implicitly by comfy.sample.sample
             )
-            if not isinstance(samples_latent, dict) or "samples" not in samples_latent:
-                raise ValueError("Sampler output missing 'samples' key.")
+
+            # Handle potential variations in the return type of sample
+            if isinstance(samples_latent, dict) and "samples" in samples_latent:
+                latent_to_decode = samples_latent["samples"]
+            elif isinstance(samples_latent, torch.Tensor): # Direct tensor return
+                latent_to_decode = samples_latent
+            else:
+                 raise ValueError(f"Sampler output unexpected format: {type(samples_latent)}. Expected dict with 'samples' or torch.Tensor.")
+
             logger.debug("  Sampling complete. Decoding...")
-            img_tensor_chw = vae.decode(samples_latent["samples"]) # [B, C, H, W]
+            img_tensor_chw = vae.decode(latent_to_decode) # [B, C, H, W]
             logger.debug(f"  Decoding complete. Shape: {img_tensor_chw.shape}")
             img_tensor_bhwc = img_tensor_chw.permute(0, 2, 3, 1) # [B, H, W, C]
             return img_tensor_bhwc
@@ -269,15 +284,30 @@ class LoraStrengthXYPlot:
             logger.error(f"  ERROR generating image {img_index} (LoRA: '{lora_filename_part}', Str: {strength:.3f}). Error: {e_generate}", exc_info=True)
             # Create placeholder
             try:
-                 latent_shape = base_latent['samples'].shape
-                 H_img, W_img = latent_shape[2] * 8, latent_shape[3] * 8
-                 C_img = 3
-                 device = base_model.device
-                 dtype = base_model.model.dtype
-                 img_tensor_hwc = self._create_placeholder_image(H_img, W_img, C_img, device, dtype)
+                latent_shape = base_latent['samples'].shape
+                H_img, W_img = latent_shape[2] * 8, latent_shape[3] * 8 # Calculate image dimensions from latent
+                C_img = 3 # Assume 3 channels (RGB)
+
+                # --- Corrected device and dtype access ---
+                if hasattr(base_model, 'model') and hasattr(base_model.model, 'device') and hasattr(base_model.model, 'dtype'):
+                    device = base_model.model.device
+                    dtype = base_model.model.dtype
+                elif hasattr(base_model, 'load_device'): # Fallback for some model types (e.g., older Comfy versions or different patchers)
+                    device = base_model.load_device
+                    # Attempt to get dtype, fallback to float32
+                    dtype = getattr(base_model, 'dtype', torch.float32) # Check direct attribute first
+                    if hasattr(base_model, 'model_dtype') and callable(base_model.model_dtype): # Check for method
+                         dtype = base_model.model_dtype()
+                else:
+                    logger.warning("Could not reliably determine model device/dtype for placeholder. Falling back to CPU/float32.")
+                    device = torch.device('cpu')
+                    dtype = torch.float32
+                # --- End Correction ---
+
+                img_tensor_hwc = self._create_placeholder_image(H_img, W_img, C_img, device, dtype)
             except Exception as e_placeholder_fallback:
-                 logger.critical(f"  Failed to determine placeholder dimensions: {e_placeholder_fallback}", exc_info=True)
-                 raise RuntimeError("Failed to generate image and could not create placeholder.") from e_generate
+                logger.critical(f"  Failed to determine placeholder dimensions or create placeholder: {e_placeholder_fallback}", exc_info=True)
+                raise RuntimeError("Failed to generate image and could not create placeholder.") from e_generate
 
         finally:
             # Clean up clones
