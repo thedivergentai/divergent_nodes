@@ -179,6 +179,7 @@ class GeminiNode:
             final_output = str(final_output)
 
         logger.info("Gemini Node: Execution finished.")
-        return (final_output,)
+        # Ensure the final output is UTF-8 friendly before returning
+        return (ensure_utf8_friendly(final_output),)
 
 # Note: Mappings are handled in google_ai/__init__.py
