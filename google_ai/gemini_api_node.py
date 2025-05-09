@@ -22,6 +22,9 @@ from .gemini_utils import (
     google_exceptions # Import for exception handling
 )
 
+# Import shared utility for text encoding
+from ..shared_utils.text_encoding_utils import ensure_utf8_friendly
+
 # Setup logger for this module
 logger = logging.getLogger(__name__)
 # Ensure handler is configured if root logger isn't set up
@@ -126,8 +129,11 @@ class GeminiNode:
             # 3. Initialize Model using utility function
             gemini_model = initialize_model(model, safety_settings, generation_config)
 
+            # Ensure prompt is UTF-8 friendly
+            safe_prompt = ensure_utf8_friendly(prompt)
+
             # 4. Prepare Content Parts using utility function
-            content_parts, img_error = prepare_content_parts(prompt, image_optional, model)
+            content_parts, img_error = prepare_content_parts(safe_prompt, image_optional, model)
             if img_error:
                 # Raise error to be caught by generic handler below
                 raise RuntimeError(img_error)
