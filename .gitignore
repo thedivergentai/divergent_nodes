@@ -1,2 +1,32 @@
+# Byte-code files
+*.pyc
 __pycache__/
+
+# Environments
+.venv/
+venv/
+env/
+.direnv/
 .env
+
+# Editor directories and files
+.vscode/
+.idea/
+
+# ComfyUI specific
+output/
+input/ # Consider if users want to track input files
+temp/
+nodes/ # If custom nodes are built here, ignore build artifacts
+*.ckpt
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.onnx
+*.yaml
+*.yml
+*.json # Might need to be more specific if config JSONs are tracked
+
+# Specific to this project
+memory-bank/source/ # This seems like an accidental directory
