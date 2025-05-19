@@ -43,7 +43,9 @@ class GeminiNode:
     of available models supporting content generation when ComfyUI loads the node.
     """
     # Fetch models using the utility function
-    AVAILABLE_MODELS = get_available_models()
+    # Need to configure API key first to fetch models dynamically
+    _api_key_for_init = configure_api_key() # Load API key during node initialization
+    AVAILABLE_MODELS = get_available_models(_api_key_for_init) # Pass API key to fetch models
     SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
 
     # Define ComfyUI node attributes
@@ -111,9 +113,10 @@ class GeminiNode:
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
 
-        # 1. Configure API Key using utility function
-        if not configure_api_key():
-            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY configuration failed. Check environment/.env."
+        # 1. Load API Key using utility function
+        api_key = configure_api_key() # Get the API key string
+        if not api_key:
+            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Check environment/.env."
             logger.info("Gemini Node: Execution finished due to API key error.")
             return (final_output,)
 
@@ -126,8 +129,8 @@ class GeminiNode:
                 temperature, top_p, top_k, max_output_tokens
             )
 
-            # 3. Initialize Model using utility function
-            gemini_model = initialize_model(model, safety_settings, generation_config)
+            # 3. Initialize Model using utility function, passing the API key
+            gemini_model = initialize_model(api_key, model, safety_settings, generation_config)
 
             # Ensure prompt is UTF-8 friendly
             safe_prompt = ensure_utf8_friendly(prompt)

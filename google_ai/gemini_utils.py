@@ -77,22 +77,17 @@ ERROR_PREFIX = "ERROR:"
 # We will continue to use the .env loading and global configure for simplicity with the existing node structure.
 # client = genai.Client(api_key=os.getenv("GEMINI_API_KEY")) # Not using client instance for now
 
-def get_available_models() -> List[str]:
+def get_available_models(api_key: Optional[str]) -> List[str]:
     """Fetches available Gemini models supporting 'generateContent'."""
     logger.debug("Attempting to fetch available Gemini models...")
-    api_key_found = False
-    try:
-        # Ensure API key is configured before listing models
-        api_key = configure_api_key()
-        if not api_key:
-             logger.warning("API key not configured. Cannot fetch dynamic model list.")
-             return DEFAULT_MODELS
+    if not api_key:
+         logger.warning("API key not provided. Cannot fetch dynamic model list.")
+         return DEFAULT_MODELS
 
-        api_key_found = True
-        # Use genai.list_models after configure is called
-        # Access list_models via the imported genai
+    try:
+        # Use genai.list_models with the api_key parameter
         model_list: List[str] = [
-            m.name for m in genai.list_models()
+            m.name for m in genai.list_models(api_key=api_key)
             if 'generateContent' in m.supported_generation_methods
         ]
         if not model_list:
@@ -105,12 +100,11 @@ def get_available_models() -> List[str]:
          logger.error(f"Google SDK import failed: {e}. Using default list.", exc_info=True)
          return DEFAULT_MODELS
     except Exception as e:
-        log_func = logger.error if api_key_found else logger.warning
-        log_func(f"Failed to fetch models from Gemini API: {e}. Using default list.", exc_info=True)
+        logger.error(f"Failed to fetch models from Gemini API: {e}. Using default list.", exc_info=True)
         return DEFAULT_MODELS
 
 def configure_api_key() -> Optional[str]:
-    """Checks for and configures the Gemini API key."""
+    """Checks for and loads the Gemini API key."""
     logger.debug("configure_api_key called.")
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key:
@@ -132,15 +126,9 @@ def configure_api_key() -> Optional[str]:
             logger.error("GEMINI_API_KEY not found in environment or .env file after load_dotenv.")
             return None
 
-    try:
-        # Use genai.configure for global configuration as before
-        # Access configure via the imported genai
-        genai.configure(api_key=api_key)
-        logger.info("Gemini API configured successfully.")
-        return api_key
-    except Exception as e:
-        logger.error(f"Failed to configure Gemini API with key: {e}", exc_info=True)
-        return None
+    # API key is loaded, return it. Configuration happens when client/model is initialized.
+    logger.debug("API key loaded successfully.")
+    return api_key
 
 def prepare_safety_settings(safety_harassment: str, safety_hate_speech: str,
                              safety_sexually_explicit: str, safety_dangerous_content: str) -> List[Union[SafetySettingDict, dict]]:
@@ -171,7 +159,7 @@ def prepare_generation_config(temperature: float, top_p: float, top_k: int,
     logger.warning("Using dictionary for generation_config due to failed type import or instantiation error.")
     return config_data
 
-def initialize_model(model_name: str, safety_settings: List[Union[SafetySettingDict, dict]],
+def initialize_model(api_key: str, model_name: str, safety_settings: List[Union[SafetySettingDict, dict]],
                       generation_config: Union[GenerationConfigDict, dict]) -> Union[GenerativeModel, Any]:
     """Initializes the GenerativeModel instance."""
     logger.info(f"Initializing Gemini model: {model_name}")
@@ -179,6 +167,7 @@ def initialize_model(model_name: str, safety_settings: List[Union[SafetySettingD
         # Pass configs directly, type safety handled by genai library internally
         # The actual type returned depends on whether the specific GenerativeModel was imported
         return genai.GenerativeModel(
+            api_key=api_key, # Pass the API key here
             model_name=model_name,
             safety_settings=safety_settings,
             generation_config=generation_config
