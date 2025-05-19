@@ -99,9 +99,13 @@ def get_available_models(api_key: Optional[str]) -> List[str]:
          return DEFAULT_MODELS
 
     try:
-        # Use genai.list_models with the api_key parameter
+        # Instantiate client with the provided API key
+        client = genai.Client(api_key=api_key)
+        logger.debug("genai.Client instantiated for model listing.")
+
+        # Use client.list_models()
         model_list: List[str] = [
-            m.name for m in genai.list_models(api_key=api_key)
+            m.name for m in client.list_models()
             if 'generateContent' in m.supported_generation_methods
         ]
         if not model_list:
