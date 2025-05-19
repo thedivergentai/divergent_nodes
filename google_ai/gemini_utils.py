@@ -262,7 +262,7 @@ def get_available_models(api_key: Optional[str]) -> List[str]:
         # Use client.models.list() as shown in documentation
         model_list: List[str] = [
             m.name for m in client.models.list()
-            if 'generateContent' in m.supported_generation_methods
+            if 'generateContent' in m.supported_actions # Corrected attribute name
         ]
         if not model_list:
              logger.warning("No models supporting 'generateContent' found via API. Using default list.")
