@@ -2,6 +2,7 @@
 Utility functions and constants for the Google Gemini API node.
 Includes functions for API key configuration, content preparation,
 generation with advanced options, and model listing.
+Uses the recommended google-genai library and follows GitHub README examples.
 """
 import os
 import logging
@@ -13,36 +14,9 @@ from google import genai
 from google.genai import types
 from google.api_core import exceptions as google_exceptions
 
-# Import necessary types for safety settings
-try:
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
-except ImportError:
-    logging.warning("gemini_utils: Could not import specific google.generativeai safety types.")
-    HarmCategory = Any # type: ignore
-    HarmBlockThreshold = Any # type: ignore
-
-
 # Import the new config manager
 from ..shared_utils.config_manager import load_config
 from ..shared_utils.image_conversion import tensor_to_pil # Assuming this utility is stable
-
-# Attempt to import specific types for better safety (re-added for config types)
-try:
-    from google.generativeai.types import (
-        generation_types,
-        SafetySettingDict,
-        GenerationConfigDict,
-        GenerateContentResponse # Keep if needed for type hinting
-    )
-    from google.generativeai.generative_models import GenerativeModel # Re-added for type hinting/clarity
-except ImportError:
-    logging.warning("gemini_utils: Could not import specific google.generativeai types. Type safety might be reduced.")
-    generation_types = None
-    SafetySettingDict = dict # type: ignore
-    GenerationConfigDict = dict # type: ignore
-    GenerativeModel = Any # type: ignore
-    GenerateContentResponse = Any # type: ignore
-    google_exceptions = None # Ensure this is None if import fails
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -122,61 +96,55 @@ def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
 
 def prepare_safety_settings(safety_harassment: str, safety_hate_speech: str,
                              safety_sexually_explicit: str, safety_dangerous_content: str) -> List[types.SafetySetting]:
-    """Builds the safety settings list from node inputs using types.SafetySetting."""
+    """Builds the safety settings list from node inputs using types.SafetySetting and strings."""
     logger.debug("Preparing safety settings.")
     settings = []
-    # Map string inputs to HarmCategory and HarmBlockThreshold enums
+    # Map string inputs to the string values expected by types.SafetySetting
     category_map = {
-        "Harassment": HarmCategory.HARM_CATEGORY_HARASSMENT,
-        "Hate speech": HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        "Sexually explicit": HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        "Dangerous": HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        "Harassment": "HARM_CATEGORY_HARASSMENT",
+        "Hate speech": "HARM_CATEGORY_HATE_SPEECH",
+        "Sexually explicit": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "Dangerous": "HARM_CATEGORY_DANGEROUS_CONTENT",
     }
     threshold_map = {
-        "Default (Unspecified)": HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED,
-        "Block Low & Above": HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-        "Block Medium & Above": HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-        "Block High Only": HarmBlockThreshold.BLOCK_ONLY_HIGH,
-        "Block None": HarmBlockThreshold.BLOCK_NONE,
+        "Default (Unspecified)": "HARM_BLOCK_THRESHOLD_UNSPECIFIED",
+        "Block Low & Above": "BLOCK_LOW_AND_ABOVE",
+        "Block Medium & Above": "BLOCK_MEDIUM_AND_ABOVE",
+        "Block High Only": "BLOCK_ONLY_HIGH",
+        "Block None": "BLOCK_NONE",
     }
 
     # Use .get() with a default to handle potential missing keys gracefully
     settings.append(types.SafetySetting(
-        category=category_map.get("Harassment", HarmCategory.HARM_CATEGORY_UNSPECIFIED),
-        threshold=threshold_map.get(safety_harassment, HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED)
+        category=category_map.get("Harassment", "HARM_CATEGORY_UNSPECIFIED"),
+        threshold=threshold_map.get(safety_harassment, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")
     ))
     settings.append(types.SafetySetting(
-        category=category_map.get("Hate speech", HarmCategory.HARM_CATEGORY_UNSPECIFIED),
-        threshold=threshold_map.get(safety_hate_speech, HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED)
+        category=category_map.get("Hate speech", "HARM_CATEGORY_UNSPECIFIED"),
+        threshold=threshold_map.get(safety_hate_speech, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")
     ))
     settings.append(types.SafetySetting(
-        category=category_map.get("Sexually explicit", HarmCategory.HARM_CATEGORY_UNSPECIFIED),
-        threshold=threshold_map.get(safety_sexually_explicit, HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED)
+        category=category_map.get("Sexually explicit", "HARM_CATEGORY_UNSPECIFIED"),
+        threshold=threshold_map.get(safety_sexually_explicit, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")
     ))
     settings.append(types.SafetySetting(
-        category=category_map.get("Dangerous", HarmCategory.HARM_CATEGORY_UNSPECIFIED),
-        threshold=threshold_map.get(safety_dangerous_content, HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED)
+        category=category_map.get("Dangerous", "HARM_CATEGORY_UNSPECIFIED"),
+        threshold=threshold_map.get(safety_dangerous_content, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")
     ))
 
     return settings
 
 def prepare_generation_config(temperature: float, top_p: float, top_k: int,
-                               max_output_tokens: int) -> Union[GenerationConfigDict, dict]:
-    """Builds the generation configuration object or dictionary."""
+                               max_output_tokens: int) -> types.GenerateContentConfig:
+    """Builds the generation configuration object using types.GenerateContentConfig."""
     logger.debug("Preparing generation config.")
-    config_data = {
-        "temperature": temperature, "top_p": top_p,
-        "top_k": top_k, "max_output_tokens": max_output_tokens,
-    }
-    # Use the specific type if available and not the fallback dict
-    if generation_types and GenerationConfigDict is not dict:
-        try:
-            return generation_types.GenerationConfig(**config_data)
-        except Exception as e:
-             logger.warning(f"Error creating GenerationConfig object: {e}. Falling back to dict.")
-    # Fallback if types weren't imported or instantiation failed
-    logger.warning("Using dictionary for generation_config due to failed type import or instantiation error.")
-    return config_data
+    # Create types.GenerateContentConfig object directly
+    return types.GenerateContentConfig(
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        max_output_tokens=max_output_tokens,
+    )
 
 
 def prepare_image_part(image_tensor: torch.Tensor) -> Tuple[Optional[types.Part], Optional[str]]:
@@ -211,8 +179,8 @@ def generate_content(
     model_name: str,
     prompt: str,
     image_part: Optional[types.Part] = None,
-    generation_config: Optional[Union[GenerationConfigDict, dict]] = None, # Add config param
-    safety_settings: Optional[List[Union[SafetySettingDict, dict]]] = None, # Add safety param
+    generation_config: Optional[types.GenerateContentConfig] = None, # Expect types.GenerateContentConfig
+    safety_settings: Optional[List[types.SafetySetting]] = None, # Expect List[types.SafetySetting]
 ) -> Tuple[str, Optional[str]]:
     """
     Generates content using genai.Client based on text and optional image parts,
@@ -233,24 +201,32 @@ def generate_content(
         client = genai.Client(api_key=api_key)
         logger.debug("genai.Client instantiated for content generation.")
 
-        # Get the specific model instance from the client
-        # This is the correct way to pass generation_config and safety_settings
-        model_instance = client.get_generative_model(model_name)
-        logger.debug(f"Obtained model instance for {model_name}.")
-
-
         # Prepare contents list based on documentation examples
         contents: List[Any] = []
         if image_part:
             contents.append(image_part)
         contents.append(prompt) # Add prompt after image as per best practices
 
+        # Create the single GenerateContentConfig object
+        # Combine generation_config and safety_settings here
+        full_config = types.GenerateContentConfig()
+        if generation_config:
+             # Copy parameters from the prepared generation_config object
+             full_config.temperature = generation_config.temperature
+             full_config.top_p = generation_config.top_p
+             full_config.top_k = generation_config.top_k
+             full_config.max_output_tokens = generation_config.max_output_tokens
+             # Add other generation config parameters if needed
+        if safety_settings:
+             full_config.safety_settings = safety_settings # Assign the list of SafetySetting objects
+
+
         logger.debug(f"Sending request to Gemini API model '{model_name}'...")
-        # Use model_instance.generate_content as determined previously
-        response = model_instance.generate_content(
+        # Use client.models.generate_content with the single config argument
+        response = client.models.generate_content(
+            model=model_name,
             contents=contents,
-            generation_config=generation_config, # Pass config here
-            safety_settings=safety_settings, # Pass safety here
+            config=full_config, # Pass the combined config object
         )
 
         # Process Response

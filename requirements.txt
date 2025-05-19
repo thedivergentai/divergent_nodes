@@ -1,6 +1,7 @@
 torch
 huggingface_hub
 transformers
-google-genai # Switched to the new recommended library
+google-generativeai
 Pillow
+python-dotenv
 requests # Added for API calls
