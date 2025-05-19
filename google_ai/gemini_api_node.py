@@ -13,9 +13,10 @@ from .gemini_utils import (
     configure_api_key,
     prepare_safety_settings,
     prepare_generation_config,
-    initialize_model,
+    # initialize_model, # Removed
     prepare_content_parts,
     process_api_response,
+    generate_content_via_client, # Added
     SAFETY_SETTINGS_MAP,
     SAFETY_THRESHOLD_TO_NAME,
     ERROR_PREFIX,
@@ -44,8 +45,8 @@ class GeminiNode:
     """
     # Fetch models using the utility function
     # Need to configure API key first to fetch models dynamically
-    _api_key_for_init = configure_api_key() # Load API key during node initialization
-    AVAILABLE_MODELS = get_available_models(_api_key_for_init) # Pass API key to fetch models
+    _env_api_key_for_init = configure_api_key(api_key_override=None) # Load API key from env/dotenv for initial model list
+    AVAILABLE_MODELS = get_available_models(_env_api_key_for_init) # Pass API key to fetch models using client
     SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
 
     # Define ComfyUI node attributes
@@ -115,13 +116,11 @@ class GeminiNode:
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
 
-        # 1. Determine API Key (Override > Environment)
-        effective_api_key = api_key_override.strip() if api_key_override else None # Use override if provided and not empty
-        if not effective_api_key:
-            effective_api_key = configure_api_key() # Fallback to environment/dotenv
+        # 1. Determine API Key (Override > Environment) using utility function
+        effective_api_key = configure_api_key(api_key_override=api_key_override)
 
         if not effective_api_key:
-            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Provide it in .env or via api_key_override input."
+            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY or GOOGLE_API_KEY not found. Provide it in .env or via api_key_override input."
             logger.info("Gemini Node: Execution finished due to API key error.")
             return (final_output,)
 
@@ -134,29 +133,25 @@ class GeminiNode:
                 temperature, top_p, top_k, max_output_tokens
             )
 
-            # 3. Initialize Model using utility function, passing the API key
-            gemini_model = initialize_model(effective_api_key, model, safety_settings, generation_config) # Use effective_api_key
-
             # Ensure prompt is UTF-8 friendly
             safe_prompt = ensure_utf8_friendly(prompt)
 
-            # 4. Prepare Content Parts using utility function
+            # 3. Prepare Content Parts using utility function
             content_parts, img_error = prepare_content_parts(safe_prompt, image_optional, model)
             if img_error:
                 # Raise error to be caught by generic handler below
                 raise RuntimeError(img_error)
 
-            # 5. Call API
-            logger.info(f"Sending request to Gemini API model '{model}'...")
-            if not hasattr(gemini_model, 'generate_content'):
-                 raise TypeError(f"Initialized model object of type {type(gemini_model)} does not have 'generate_content' method.")
-            response = gemini_model.generate_content(content_parts)
+            # 4. Generate content via client using utility function
+            final_output, response_error_msg = generate_content_via_client(
+                effective_api_key,
+                model,
+                content_parts,
+                generation_config,
+                safety_settings
+            )
 
-            # 6. Process Response using utility function
-            # process_api_response returns (text_or_processing_error, api_block_error_msg)
-            processed_text, response_error_msg = process_api_response(response)
-            # Prioritize showing the API block error message if it exists
-            final_output = response_error_msg if response_error_msg else processed_text
+            # The rest of the error handling and return logic remains the same
 
         # Handle potential Google API errors if sdk types were imported
         except google_exceptions.GoogleAPIError as e:
