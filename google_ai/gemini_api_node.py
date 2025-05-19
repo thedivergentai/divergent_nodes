@@ -89,6 +89,7 @@ class GeminiNode:
             },
             "optional": {
                  "image_optional": ("IMAGE", {"tooltip": "Optional image input for multimodal models (e.g., gemini-pro-vision, gemini-1.5-*)."}),
+                 "api_key_override": ("STRING", {"default": "", "multiline": False, "tooltip": "Optional: Override API key. If provided, this will be used instead of GEMINI_API_KEY from environment."}),
             }
         }
 
@@ -106,6 +107,7 @@ class GeminiNode:
         safety_sexually_explicit: str,
         safety_dangerous_content: str,
         image_optional: Optional[torch.Tensor] = None,
+        api_key_override: str = "", # Add the new parameter
     ) -> Tuple[str]:
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
@@ -113,10 +115,13 @@ class GeminiNode:
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
 
-        # 1. Load API Key using utility function
-        api_key = configure_api_key() # Get the API key string
-        if not api_key:
-            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Check environment/.env."
+        # 1. Determine API Key (Override > Environment)
+        effective_api_key = api_key_override.strip() if api_key_override else None # Use override if provided and not empty
+        if not effective_api_key:
+            effective_api_key = configure_api_key() # Fallback to environment/dotenv
+
+        if not effective_api_key:
+            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Provide it in .env or via api_key_override input."
             logger.info("Gemini Node: Execution finished due to API key error.")
             return (final_output,)
 
@@ -130,7 +135,7 @@ class GeminiNode:
             )
 
             # 3. Initialize Model using utility function, passing the API key
-            gemini_model = initialize_model(api_key, model, safety_settings, generation_config)
+            gemini_model = initialize_model(effective_api_key, model, safety_settings, generation_config) # Use effective_api_key
 
             # Ensure prompt is UTF-8 friendly
             safe_prompt = ensure_utf8_friendly(prompt)
