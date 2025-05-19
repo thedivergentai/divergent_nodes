@@ -13,6 +13,15 @@ from google import genai
 from google.genai import types
 from google.api_core import exceptions as google_exceptions
 
+# Import necessary types for safety settings
+try:
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+except ImportError:
+    logging.warning("gemini_utils: Could not import specific google.generativeai safety types.")
+    HarmCategory = Any # type: ignore
+    HarmBlockThreshold = Any # type: ignore
+
+
 # Import the new config manager
 from ..shared_utils.config_manager import load_config
 from ..shared_utils.image_conversion import tensor_to_pil # Assuming this utility is stable
@@ -112,15 +121,44 @@ def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
     return None
 
 def prepare_safety_settings(safety_harassment: str, safety_hate_speech: str,
-                             safety_sexually_explicit: str, safety_dangerous_content: str) -> List[Union[SafetySettingDict, dict]]:
-    """Builds the safety settings list from node inputs."""
+                             safety_sexually_explicit: str, safety_dangerous_content: str) -> List[types.SafetySetting]:
+    """Builds the safety settings list from node inputs using types.SafetySetting."""
     logger.debug("Preparing safety settings.")
-    return [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": SAFETY_SETTINGS_MAP.get(safety_harassment, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": SAFETY_SETTINGS_MAP.get(safety_hate_speech, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": SAFETY_SETTINGS_MAP.get(safety_sexually_explicit, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": SAFETY_SETTINGS_MAP.get(safety_dangerous_content, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")},
-    ]
+    settings = []
+    # Map string inputs to HarmCategory and HarmBlockThreshold enums
+    category_map = {
+        "Harassment": HarmCategory.HARM_CATEGORY_HARASSMENT,
+        "Hate speech": HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        "Sexually explicit": HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        "Dangerous": HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    }
+    threshold_map = {
+        "Default (Unspecified)": HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED,
+        "Block Low & Above": HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+        "Block Medium & Above": HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        "Block High Only": HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        "Block None": HarmBlockThreshold.BLOCK_NONE,
+    }
+
+    # Use .get() with a default to handle potential missing keys gracefully
+    settings.append(types.SafetySetting(
+        category=category_map.get("Harassment", HarmCategory.HARM_CATEGORY_UNSPECIFIED),
+        threshold=threshold_map.get(safety_harassment, HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED)
+    ))
+    settings.append(types.SafetySetting(
+        category=category_map.get("Hate speech", HarmCategory.HARM_CATEGORY_UNSPECIFIED),
+        threshold=threshold_map.get(safety_hate_speech, HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED)
+    ))
+    settings.append(types.SafetySetting(
+        category=category_map.get("Sexually explicit", HarmCategory.HARM_CATEGORY_UNSPECIFIED),
+        threshold=threshold_map.get(safety_sexually_explicit, HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED)
+    ))
+    settings.append(types.SafetySetting(
+        category=category_map.get("Dangerous", HarmCategory.HARM_CATEGORY_UNSPECIFIED),
+        threshold=threshold_map.get(safety_dangerous_content, HarmBlockThreshold.HARM_BLOCK_THRESHOLD_UNSPECIFIED)
+    ))
+
+    return settings
 
 def prepare_generation_config(temperature: float, top_p: float, top_k: int,
                                max_output_tokens: int) -> Union[GenerationConfigDict, dict]:
