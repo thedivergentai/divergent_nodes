@@ -5,7 +5,7 @@ Requires a GEMINI_API_KEY environment variable.
 """
 import logging
 import torch
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 
 # Import necessary functions and constants from the new utils module
 from .gemini_utils import (
