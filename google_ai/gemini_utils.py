@@ -1,6 +1,7 @@
 """
 Utility functions and constants for the Google Gemini API node.
-Simplified implementation based on Google AI documentation examples.
+Includes functions for API key configuration, content preparation,
+generation with advanced options, and model listing.
 """
 import os
 import logging
@@ -15,6 +16,24 @@ from google.api_core import exceptions as google_exceptions
 # Import the new config manager
 from ..shared_utils.config_manager import load_config
 from ..shared_utils.image_conversion import tensor_to_pil # Assuming this utility is stable
+
+# Attempt to import specific types for better safety (re-added for config types)
+try:
+    from google.generativeai.types import (
+        generation_types,
+        SafetySettingDict,
+        GenerationConfigDict,
+        GenerateContentResponse # Keep if needed for type hinting
+    )
+    from google.generativeai.generative_models import GenerativeModel # Re-added for type hinting/clarity
+except ImportError:
+    logging.warning("gemini_utils: Could not import specific google.generativeai types. Type safety might be reduced.")
+    generation_types = None
+    SafetySettingDict = dict # type: ignore
+    GenerationConfigDict = dict # type: ignore
+    GenerativeModel = Any # type: ignore
+    GenerateContentResponse = Any # type: ignore
+    google_exceptions = None # Ensure this is None if import fails
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -45,6 +64,14 @@ DEFAULT_MODELS: List[str] = [
     "models/gemini-2.0-flash-live-001",
 ]
 
+SAFETY_SETTINGS_MAP: Dict[str, str] = {
+    "Default (Unspecified)": "HARM_BLOCK_THRESHOLD_UNSPECIFIED",
+    "Block Low & Above": "BLOCK_LOW_AND_ABOVE",
+    "Block Medium & Above": "BLOCK_MEDIUM_AND_ABOVE",
+    "Block High Only": "BLOCK_ONLY_HIGH",
+    "Block None": "BLOCK_NONE",
+}
+SAFETY_THRESHOLD_TO_NAME: Dict[str, str] = {v: k for k, v in SAFETY_SETTINGS_MAP.items()}
 ERROR_PREFIX = "ERROR:"
 
 # --- Helper Functions ---
@@ -84,6 +111,36 @@ def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
     logger.error("GOOGLE_API_KEY or GEMINI_API_KEY not found in config.json or environment.")
     return None
 
+def prepare_safety_settings(safety_harassment: str, safety_hate_speech: str,
+                             safety_sexually_explicit: str, safety_dangerous_content: str) -> List[Union[SafetySettingDict, dict]]:
+    """Builds the safety settings list from node inputs."""
+    logger.debug("Preparing safety settings.")
+    return [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": SAFETY_SETTINGS_MAP.get(safety_harassment, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": SAFETY_SETTINGS_MAP.get(safety_hate_speech, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": SAFETY_SETTINGS_MAP.get(safety_sexually_explicit, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": SAFETY_SETTINGS_MAP.get(safety_dangerous_content, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")},
+    ]
+
+def prepare_generation_config(temperature: float, top_p: float, top_k: int,
+                               max_output_tokens: int) -> Union[GenerationConfigDict, dict]:
+    """Builds the generation configuration object or dictionary."""
+    logger.debug("Preparing generation config.")
+    config_data = {
+        "temperature": temperature, "top_p": top_p,
+        "top_k": top_k, "max_output_tokens": max_output_tokens,
+    }
+    # Use the specific type if available and not the fallback dict
+    if generation_types and GenerationConfigDict is not dict:
+        try:
+            return generation_types.GenerationConfig(**config_data)
+        except Exception as e:
+             logger.warning(f"Error creating GenerationConfig object: {e}. Falling back to dict.")
+    # Fallback if types weren't imported or instantiation failed
+    logger.warning("Using dictionary for generation_config due to failed type import or instantiation error.")
+    return config_data
+
+
 def prepare_image_part(image_tensor: torch.Tensor) -> Tuple[Optional[types.Part], Optional[str]]:
     """
     Converts a ComfyUI image tensor to a Gemini API types.Part for inline use.
@@ -116,9 +173,12 @@ def generate_content(
     model_name: str,
     prompt: str,
     image_part: Optional[types.Part] = None,
+    generation_config: Optional[Union[GenerationConfigDict, dict]] = None, # Add config param
+    safety_settings: Optional[List[Union[SafetySettingDict, dict]]] = None, # Add safety param
 ) -> Tuple[str, Optional[str]]:
     """
-    Generates content using genai.Client based on text and optional image parts.
+    Generates content using genai.Client based on text and optional image parts,
+    with optional generation config and safety settings.
     Returns a tuple: (generated_text_or_error, api_block_error_msg).
     """
     logger.info(f"Generating content for model: {model_name}")
@@ -135,6 +195,12 @@ def generate_content(
         client = genai.Client(api_key=api_key)
         logger.debug("genai.Client instantiated for content generation.")
 
+        # Get the specific model instance from the client
+        # This is the correct way to pass generation_config and safety_settings
+        model_instance = client.get_generative_model(model_name)
+        logger.debug(f"Obtained model instance for {model_name}.")
+
+
         # Prepare contents list based on documentation examples
         contents: List[Any] = []
         if image_part:
@@ -142,15 +208,11 @@ def generate_content(
         contents.append(prompt) # Add prompt after image as per best practices
 
         logger.debug(f"Sending request to Gemini API model '{model_name}'...")
-        # Use client.models.generate_content as shown in documentation
-        # Note: generation_config and safety_settings are NOT passed here directly
-        response = client.models.generate_content(
-            model=model_name,
+        # Use model_instance.generate_content as determined previously
+        response = model_instance.generate_content(
             contents=contents,
-            # generation_config and safety_settings are omitted for simplicity
-            # based on the provided documentation examples.
-            # If needed, their correct passing method with genai.Client needs
-            # to be determined from more detailed SDK documentation.
+            generation_config=generation_config, # Pass config here
+            safety_settings=safety_settings, # Pass safety here
         )
 
         # Process Response
@@ -225,6 +287,7 @@ def generate_content(
              logger.error(error_msg, exc_info=True)
              final_output = f"{ERROR_PREFIX} A Google API error occurred ({getattr(e, 'code', 'N/A')}). Check console logs."
          else:
+             # Fallback if specific exception types aren't available
              error_msg = f"{ERROR_PREFIX} An API error occurred: {e}"
              logger.error(error_msg, exc_info=True)
              final_output = f"{ERROR_PREFIX} An API error occurred. Check console logs."
@@ -246,7 +309,7 @@ def generate_content(
     return final_output, response_error_msg # Return text (or processing error) and potential block message
 
 # Note: get_available_models is still needed for INPUT_TYPES in the node file.
-# It should also use genai.Client(api_key=api_key).list_models()
+# It should also use genai.Client(api_key=api_key).models.list()
 def get_available_models(api_key: Optional[str]) -> List[str]:
     """Fetches available Gemini models supporting 'generateContent' using genai.Client."""
     logger.debug("Attempting to fetch available Gemini models...")
