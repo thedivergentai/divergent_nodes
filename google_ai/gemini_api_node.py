@@ -1,14 +1,6 @@
 """
 ComfyUI node for interacting with the Google Gemini API.
-Supports text generation and multimodal input (text + image).
-Requires a GEMINI_API_KEY environment variable.
-"""
-import logging
-import torch
-from typing import Optional, Dict, Any, Tuple
-
-"""
-ComfyUI node for interacting with the Google Gemini API.
+Simplified implementation based on Google AI documentation examples.
 Supports text generation and multimodal input (text + image).
 Configuration is handled via config.json or node input override.
 """
@@ -16,23 +8,17 @@ import logging
 import torch
 from typing import Optional, Dict, Any, Tuple
 
-# Import necessary functions and constants from the new utils module
+# Import necessary functions and constants from the simplified utils module
 from .gemini_utils import (
     get_available_models,
     configure_api_key,
-    prepare_safety_settings,
-    prepare_generation_config,
-    generate_content_via_client, # Use the client-based generation function
-    prepare_content_parts,
-    process_api_response, # Keep if needed for processing responses outside generate_content_via_client
-    SAFETY_SETTINGS_MAP,
-    SAFETY_THRESHOLD_TO_NAME,
+    prepare_image_part, # Use the simplified image preparation
+    generate_content, # Use the simplified content generation
     ERROR_PREFIX,
-    google_exceptions # Import for exception handling
 )
 
-# Import shared utility for text encoding
-from ..shared_utils.text_encoding_utils import ensure_utf8_friendly
+# Import shared utility for text encoding (if still needed, check usage)
+# from ..shared_utils.text_encoding_utils import ensure_utf8_friendly # Not used in this simplified version
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -66,8 +52,6 @@ class GeminiNode:
         from .gemini_utils import DEFAULT_MODELS as FALLBACK_MODELS
         AVAILABLE_MODELS = FALLBACK_MODELS
 
-    SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
-
     # Define ComfyUI node attributes
     RETURN_TYPES: Tuple[str] = ("STRING",)
     RETURN_NAMES: Tuple[str] = ("text",)
@@ -82,9 +66,8 @@ class GeminiNode:
     def INPUT_TYPES(cls) -> Dict[str, Dict[str, Any]]:
         """
         Defines the input types and options for the ComfyUI node interface.
+        Simplified inputs based on the rewrite plan.
         """
-        # Determine default safety setting names using constants from utils
-        default_safety = SAFETY_THRESHOLD_TO_NAME.get("BLOCK_MEDIUM_AND_ABOVE", cls.SAFETY_OPTIONS[0])
         # Select a reasonable default model
         default_model = ""
         if cls.AVAILABLE_MODELS:
@@ -98,21 +81,12 @@ class GeminiNode:
              from .gemini_utils import DEFAULT_MODELS as FALLBACK_MODELS
              default_model = next((m for m in FALLBACK_MODELS if "flash" in m or "pro" in m), FALLBACK_MODELS[0] if FALLBACK_MODELS else "")
 
-
-        logger.debug(f"Setting up INPUT_TYPES. Default model: '{default_model}'. Default safety: '{default_safety}'.")
+        logger.debug(f"Setting up INPUT_TYPES. Default model: '{default_model}'.")
 
         return {
             "required": {
                 "model": (cls.AVAILABLE_MODELS, {"default": default_model, "tooltip": "Select the Gemini model to use."}),
                 "prompt": ("STRING", {"multiline": True, "default": "Describe the image.", "tooltip": "The text prompt for generation."}),
-                "temperature": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "Controls randomness. Higher values (e.g., 1.0) are more creative, lower values (e.g., 0.2) are more deterministic."}),
-                "top_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Nucleus sampling probability threshold (e.g., 0.95). 1.0 disables."}),
-                "top_k": ("INT", {"default": 1, "min": 1, "max": 100, "step": 1, "tooltip": "Top-K sampling threshold (consider probability of token)."}),
-                "max_output_tokens": ("INT", {"default": 2048, "min": 1, "max": 8192, "step": 1, "tooltip": "Maximum number of tokens to generate in the response."}),
-                "safety_harassment": (cls.SAFETY_OPTIONS, {"default": default_safety, "tooltip": "Safety threshold for harassment content."}),
-                "safety_hate_speech": (cls.SAFETY_OPTIONS, {"default": default_safety, "tooltip": "Safety threshold for hate speech content."}),
-                "safety_sexually_explicit": (cls.SAFETY_OPTIONS, {"default": default_safety, "tooltip": "Safety threshold for sexually explicit content."}),
-                "safety_dangerous_content": (cls.SAFETY_OPTIONS, {"default": default_safety, "tooltip": "Safety threshold for dangerous content."}),
             },
             "optional": {
                  "image_optional": ("IMAGE", {"tooltip": "Optional image input for multimodal models (e.g., gemini-pro-vision, gemini-1.5-*)."}),
@@ -125,19 +99,12 @@ class GeminiNode:
         self,
         model: str,
         prompt: str,
-        temperature: float,
-        top_p: float,
-        top_k: int,
-        max_output_tokens: int,
-        safety_harassment: str,
-        safety_hate_speech: str,
-        safety_sexually_explicit: str,
-        safety_dangerous_content: str,
         image_optional: Optional[torch.Tensor] = None,
         api_key_override: str = "" # Add api_key_override as an input parameter
     ) -> Tuple[str]:
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
+        Simplified execution based on the rewrite plan.
         """
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
@@ -151,51 +118,33 @@ class GeminiNode:
             return (final_output,)
 
         try:
-            # 2. Prepare Configurations using utility functions
-            safety_settings = prepare_safety_settings(
-                safety_harassment, safety_hate_speech, safety_sexually_explicit, safety_dangerous_content
-            )
-            generation_config = prepare_generation_config(
-                temperature, top_p, top_k, max_output_tokens
-            )
+            # 2. Prepare Image Part if provided
+            image_part = None
+            if image_optional is not None:
+                image_part, img_error = prepare_image_part(image_optional)
+                if img_error:
+                    # If image preparation fails, return the error
+                    logger.error(f"Image preparation failed: {img_error}")
+                    return (img_error,)
+                if image_part is None:
+                     # Should not happen if img_error is None, but as a safeguard
+                     error_msg = f"{ERROR_PREFIX} Image preparation failed unexpectedly."
+                     logger.error(error_msg)
+                     return (error_msg,)
 
-            # Ensure prompt is UTF-8 friendly
-            safe_prompt = ensure_utf8_friendly(prompt)
 
-            # 3. Prepare Content Parts using utility function
-            content_parts, img_error = prepare_content_parts(safe_prompt, image_optional, model)
-            if img_error:
-                # Raise error to be caught by generic handler below
-                raise RuntimeError(img_error)
-
-            # 4. Call API using the client-based utility function
-            # This function now handles client initialization and content generation
-            final_output, response_error_msg = generate_content_via_client(
+            # 3. Call API using the simplified generate_content utility function
+            # This function handles client initialization and content generation
+            final_output, response_error_msg = generate_content(
                 api_key=api_key,
                 model_name=model,
-                contents=content_parts,
-                generation_config=generation_config,
-                safety_settings=safety_settings
+                prompt=prompt,
+                image_part=image_part,
             )
 
-            # The generate_content_via_client function already processes the response
+            # The generate_content function already processes the response
             # and returns the final output or an error message.
-            # No need to call process_api_response here again.
 
-        # Handle potential Google API errors if sdk types were imported
-        except google_exceptions.GoogleAPIError as e:
-             # Check if google_exceptions was successfully imported before using it
-             if google_exceptions:
-                 error_msg = f"{ERROR_PREFIX} Google API Error - Status: {getattr(e, 'code', 'N/A')}, Message: {e}"
-                 logger.error(error_msg, exc_info=True)
-                 final_output = f"{ERROR_PREFIX} A Google API error occurred ({getattr(e, 'code', 'N/A')}). Check console logs."
-             else:
-                 # Fallback if specific exception types aren't available
-                 error_msg = f"{ERROR_PREFIX} An API error occurred: {e}"
-                 logger.error(error_msg, exc_info=True)
-                 final_output = f"{ERROR_PREFIX} An API error occurred. Check console logs."
-
-        # Catch broader errors during the overall process
         except Exception as e:
             error_details = str(e)
             if hasattr(e, 'message') and e.message: error_details = e.message
@@ -211,7 +160,8 @@ class GeminiNode:
             final_output = str(final_output)
 
         logger.info("Gemini Node: Execution finished.")
-        # Ensure the final output is UTF-8 friendly before returning
-        return (ensure_utf8_friendly(final_output),)
+        # Ensure the final output is UTF-8 friendly before returning (optional, depends on needs)
+        # return (ensure_utf8_friendly(final_output),) # Re-add if needed
+        return (final_output,) # Return directly for simplicity
 
 # Note: Mappings are handled in google_ai/__init__.py
