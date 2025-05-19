@@ -8,9 +8,7 @@ from PIL import Image
 import torch
 from google import genai
 from google.genai import types
-
-# Import the new config manager
-from ..shared_utils.config_manager import load_config
+from dotenv import load_dotenv, find_dotenv
 
 # Attempt to import specific types for better safety
 try:
@@ -56,18 +54,10 @@ PilImageT: TypeAlias = Image.Image
 
 # --- Constants ---
 DEFAULT_MODELS: List[str] = [
-    "models/gemini-2.5-flash-preview-04-17",
-    "models/gemini-2.5-pro-preview-05-06",
-    "models/gemini-2.0-flash",
-    "models/gemini-2.0-flash-preview-image-generation",
-    "models/gemini-2.0-flash-lite",
-    "models/gemini-1.5-flash",
-    "models/gemini-1.5-flash-8b",
-    "models/gemini-1.5-pro",
-    "models/gemini-embedding-exp",
-    "models/imagen-3.0-generate-002",
-    "models/veo-2.0-generate-001",
-    "models/gemini-2.0-flash-live-001",
+    "models/gemini-1.5-pro-latest",
+    "models/gemini-1.5-flash-latest",
+    "models/gemini-1.0-pro",
+    "models/gemini-pro-vision",
 ]
 
 SAFETY_SETTINGS_MAP: Dict[str, str] = {
@@ -88,20 +78,16 @@ ERROR_PREFIX = "ERROR:"
 # client = genai.Client(api_key=os.getenv("GEMINI_API_KEY")) # Not using client instance for now
 
 def get_available_models(api_key: Optional[str]) -> List[str]:
-    """Fetches available Gemini models supporting 'generateContent' using genai.Client."""
-    logger.debug("Attempting to fetch available Gemini models using genai.Client...")
+    """Fetches available Gemini models supporting 'generateContent'."""
+    logger.debug("Attempting to fetch available Gemini models...")
     if not api_key:
          logger.warning("API key not provided. Cannot fetch dynamic model list.")
          return DEFAULT_MODELS
 
     try:
-        # Instantiate client with the provided API key
-        client = genai.Client(api_key=api_key)
-        logger.debug("genai.Client instantiated for model listing.")
-
-        # Use client.list_models()
+        # Use genai.list_models with the api_key parameter
         model_list: List[str] = [
-            m.name for m in client.list_models()
+            m.name for m in genai.list_models(api_key=api_key)
             if 'generateContent' in m.supported_generation_methods
         ]
         if not model_list:
@@ -117,40 +103,32 @@ def get_available_models(api_key: Optional[str]) -> List[str]:
         logger.error(f"Failed to fetch models from Gemini API: {e}. Using default list.", exc_info=True)
         return DEFAULT_MODELS
 
-def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
-    """
-    Determines the Gemini API key to use (override > config.json > environment).
-    Returns the key string.
-    """
+def configure_api_key() -> Optional[str]:
+    """Checks for and loads the Gemini API key."""
     logger.debug("configure_api_key called.")
-
-    # 1. Check override first
-    if api_key_override and api_key_override.strip():
-        api_key = api_key_override.strip()
-        logger.debug(f"Using API key from override: {api_key[:4]}...") # Log first few chars
-        return api_key
-
-    # 2. Load config from config.json
-    config = load_config()
-    api_key = config.get("GOOGLE_API_KEY")
-    if api_key:
-        logger.debug(f"GOOGLE_API_KEY found in config.json: {api_key[:4]}...") # Log first few chars
-        return api_key
-
-    # 3. Fallback to environment variable (less preferred)
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if api_key:
-        logger.warning("Using GOOGLE_API_KEY from environment variable. Consider moving to config.json.")
-        return api_key
-
-    # 4. Fallback to old GEMINI_API_KEY environment variable (deprecated)
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key:
-        logger.warning(f"Using deprecated GEMINI_API_KEY from environment variable: {api_key[:4]}... Consider renaming to GOOGLE_API_KEY and moving to config.json.") # Log first few chars
-        return api_key
+        logger.debug("GEMINI_API_KEY found in environment before load_dotenv.")
+    else:
+        logger.debug("GEMINI_API_KEY not found in environment before load_dotenv. Attempting to load from .env.")
+        dotenv_path = find_dotenv()
+        if dotenv_path:
+            logger.debug(f"find_dotenv() found .env file at: {dotenv_path}")
+            load_dotenv(dotenv_path, override=True)
+            logger.debug("load_dotenv() called.")
+        else:
+            logger.warning("find_dotenv() did not find a .env file.")
 
-    logger.error("GOOGLE_API_KEY or GEMINI_API_KEY not found in config.json or environment.")
-    return None
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            logger.debug("GEMINI_API_KEY found after load_dotenv.")
+        else:
+            logger.error("GEMINI_API_KEY not found in environment or .env file after load_dotenv.")
+            return None
+
+    # API key is loaded, return it. Configuration happens when client/model is initialized.
+    logger.debug("API key loaded successfully.")
+    return api_key
 
 def prepare_safety_settings(safety_harassment: str, safety_hate_speech: str,
                              safety_sexually_explicit: str, safety_dangerous_content: str) -> List[Union[SafetySettingDict, dict]]:
@@ -181,6 +159,22 @@ def prepare_generation_config(temperature: float, top_p: float, top_k: int,
     logger.warning("Using dictionary for generation_config due to failed type import or instantiation error.")
     return config_data
 
+def initialize_model(api_key: str, model_name: str, safety_settings: List[Union[SafetySettingDict, dict]],
+                      generation_config: Union[GenerationConfigDict, dict]) -> Union[GenerativeModel, Any]:
+    """Initializes the GenerativeModel instance."""
+    logger.info(f"Initializing Gemini model: {model_name}")
+    try:
+        # Pass configs directly, type safety handled by genai library internally
+        # The actual type returned depends on whether the specific GenerativeModel was imported
+        return genai.GenerativeModel(
+            api_key=api_key, # Pass the API key here
+            model_name=model_name,
+            safety_settings=safety_settings,
+            generation_config=generation_config
+        )
+    except Exception as e:
+        logger.error(f"Failed to initialize Gemini model '{model_name}': {e}", exc_info=True)
+        raise RuntimeError(f"Failed to initialize Gemini model: {e}") from e
 
 def prepare_content_parts(prompt: str, image_optional: Optional[torch.Tensor], model_name: str) -> Tuple[List[Any], Optional[str]]:
     """
@@ -303,67 +297,3 @@ def process_api_response(response: Union[GenerateContentResponse, Any]) -> Tuple
     # If we reached here without an error_msg, it means generation was successful (or stopped for non-blocking reasons)
     final_text = generated_text if not error_msg else error_msg
     return final_text, error_msg # Return text (or processing error) and potential block message
-
-def generate_content_via_client(
-    api_key: str,
-    model_name: str,
-    contents: List[Any],
-    generation_config: Union[GenerationConfigDict, dict],
-    safety_settings: List[Union[SafetySettingDict, dict]]
-) -> Tuple[str, Optional[str]]:
-    """
-    Generates content using genai.Client and processes the response.
-    Returns a tuple: (final_text_or_error, api_block_error_msg).
-    """
-    logger.info(f"Generating content for model: {model_name} using genai.Client")
-    final_output = ""
-    response_error_msg: Optional[str] = None
-
-    if not api_key:
-        error_msg = f"{ERROR_PREFIX} API key not provided for generation."
-        logger.error(error_msg)
-        return error_msg, error_msg
-
-    try:
-        # Instantiate client with the provided API key
-        client = genai.Client(api_key=api_key)
-        logger.debug("genai.Client instantiated for content generation.")
-
-        # Call client.models.generate_content
-        response = client.models.generate_content(
-            model=model_name,
-            contents=contents,
-            generation_config=generation_config,
-            safety_settings=safety_settings
-        )
-
-        # Process Response using utility function
-        processed_text, response_error_msg = process_api_response(response)
-        # Prioritize showing the API block error message if it exists
-        final_output = response_error_msg if response_error_msg else processed_text
-
-    except google_exceptions.GoogleAPIError as e:
-         if google_exceptions:
-             error_msg = f"{ERROR_PREFIX} Google API Error - Status: {getattr(e, 'code', 'N/A')}, Message: {e}"
-             logger.error(error_msg, exc_info=True)
-             final_output = f"{ERROR_PREFIX} A Google API error occurred ({getattr(e, 'code', 'N/A')}). Check console logs."
-         else:
-             error_msg = f"{ERROR_PREFIX} An API error occurred: {e}"
-             logger.error(error_msg, exc_info=True)
-             final_output = f"{ERROR_PREFIX} An API error occurred. Check console logs."
-
-    except Exception as e:
-        error_details = str(e)
-        if hasattr(e, 'message') and e.message: error_details = e.message
-        elif hasattr(e, 'details') and callable(e.details) and e.details(): error_details = e.details()
-        error_msg = f"{ERROR_PREFIX} Gemini Generation Error ({type(e).__name__}): {error_details}"
-        logger.error(error_msg, exc_info=True)
-        final_output = error_msg # Always use the formatted error for consistency
-
-    # Ensure final_output is always a string before returning
-    if not isinstance(final_output, str):
-        logger.error(f"Final output was not a string ({type(final_output)}), converting. Value: {final_output}")
-        final_output = str(final_output)
-
-    logger.info("Content generation finished.")
-    return final_output, response_error_msg # Return text (or processing error) and potential block message
