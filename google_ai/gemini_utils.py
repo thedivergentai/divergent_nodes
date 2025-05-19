@@ -174,7 +174,7 @@ def initialize_model(api_key: str, model_name: str, safety_settings: List[Union[
     try:
         # Pass configs directly, type safety handled by genai library internally
         # The actual type returned depends on whether the specific GenerativeModel was imported
-        return genai.GenerativeModel(
+        return GenerativeModel( # Changed from genai.GenerativeModel
             api_key=api_key, # Pass the API key here
             model_name=model_name,
             safety_settings=safety_settings,
