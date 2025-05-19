@@ -8,7 +8,9 @@ from PIL import Image
 import torch
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv, find_dotenv
+
+# Import the new config manager
+from ..shared_utils.config_manager import load_config
 
 # Attempt to import specific types for better safety
 try:
@@ -117,8 +119,8 @@ def get_available_models(api_key: Optional[str]) -> List[str]:
 
 def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
     """
-    Determines the Gemini API key to use (override > GOOGLE_API_KEY env/dotenv > GEMINI_API_KEY env/dotenv).
-    Returns the key string without modifying os.environ.
+    Determines the Gemini API key to use (override > config.json > environment).
+    Returns the key string.
     """
     logger.debug("configure_api_key called.")
 
@@ -127,32 +129,26 @@ def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
         logger.debug("Using API key from override.")
         return api_key_override.strip()
 
-    # 2. Check GOOGLE_API_KEY environment variable
-    api_key = os.getenv("GOOGLE_API_KEY")
+    # 2. Load config from config.json
+    config = load_config()
+    api_key = config.get("GOOGLE_API_KEY")
     if api_key:
-        logger.debug("GOOGLE_API_KEY found in environment.")
+        logger.debug("GOOGLE_API_KEY found in config.json.")
         return api_key
 
-    # 3. Attempt to load from .env if not found in environment
-    dotenv_path = find_dotenv()
-    if dotenv_path:
-        logger.debug(f"find_dotenv() found .env file at: {dotenv_path}")
-        load_dotenv(dotenv_path, override=False) # Do not override existing env vars
-        logger.debug("load_dotenv() called.")
-
-    # 4. Re-check GOOGLE_API_KEY after loading .env
+    # 3. Fallback to environment variable (less preferred)
     api_key = os.getenv("GOOGLE_API_KEY")
     if api_key:
-        logger.debug("GOOGLE_API_KEY found after load_dotenv.")
+        logger.warning("Using GOOGLE_API_KEY from environment variable. Consider moving to config.json.")
         return api_key
 
-    # 5. Fallback to GEMINI_API_KEY (old name) after loading .env
+    # 4. Fallback to old GEMINI_API_KEY environment variable (deprecated)
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key:
-        logger.warning("Using deprecated GEMINI_API_KEY. Consider renaming to GOOGLE_API_KEY.")
+        logger.warning("Using deprecated GEMINI_API_KEY from environment variable. Consider renaming to GOOGLE_API_KEY and moving to config.json.")
         return api_key
 
-    logger.error("GEMINI_API_KEY or GOOGLE_API_KEY not found in environment or .env file.")
+    logger.error("GOOGLE_API_KEY or GEMINI_API_KEY not found in config.json or environment.")
     return None
 
 def prepare_safety_settings(safety_harassment: str, safety_hate_speech: str,
