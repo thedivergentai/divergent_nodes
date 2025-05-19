@@ -259,9 +259,9 @@ def get_available_models(api_key: Optional[str]) -> List[str]:
         client = genai.Client(api_key=api_key)
         logger.debug("genai.Client instantiated for model listing.")
 
-        # Use client.list_models()
+        # Use client.models.list() as shown in documentation
         model_list: List[str] = [
-            m.name for m in client.list_models()
+            m.name for m in client.models.list()
             if 'generateContent' in m.supported_generation_methods
         ]
         if not model_list:
