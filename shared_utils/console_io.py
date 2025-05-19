@@ -10,7 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 # Ensure handler is configured if root logger isn't set up
 if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format='[Divergent Nodes] %(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
 # --- Safe Print Function ---

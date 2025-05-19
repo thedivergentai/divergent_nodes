@@ -6,7 +6,8 @@ import logging
 from typing import Optional, Dict, Any, Tuple, List, Union, TypeAlias
 from PIL import Image
 import torch
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv, find_dotenv
 
 # Attempt to import specific types for better safety
@@ -71,18 +72,25 @@ ERROR_PREFIX = "ERROR:"
 
 # --- Helper Functions ---
 
+# Create a client instance (as shown in some examples)
+# Note: The API key is configured globally or per-client.
+# We will continue to use the .env loading and global configure for simplicity with the existing node structure.
+# client = genai.Client(api_key=os.getenv("GEMINI_API_KEY")) # Not using client instance for now
+
 def get_available_models() -> List[str]:
     """Fetches available Gemini models supporting 'generateContent'."""
     logger.debug("Attempting to fetch available Gemini models...")
     api_key_found = False
     try:
-        load_dotenv(find_dotenv(), override=True)
-        api_key = os.getenv("GEMINI_API_KEY")
+        # Ensure API key is configured before listing models
+        api_key = configure_api_key()
         if not api_key:
-            logger.warning("GEMINI_API_KEY not found. Cannot fetch dynamic model list.")
-            return DEFAULT_MODELS
+             logger.warning("API key not configured. Cannot fetch dynamic model list.")
+             return DEFAULT_MODELS
+
         api_key_found = True
-        genai.configure(api_key=api_key)
+        # Use genai.list_models after configure is called
+        # Access list_models via the imported genai
         model_list: List[str] = [
             m.name for m in genai.list_models()
             if 'generateContent' in m.supported_generation_methods
@@ -103,14 +111,30 @@ def get_available_models() -> List[str]:
 
 def configure_api_key() -> Optional[str]:
     """Checks for and configures the Gemini API key."""
+    logger.debug("configure_api_key called.")
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        load_dotenv(find_dotenv(), override=True)
+    if api_key:
+        logger.debug("GEMINI_API_KEY found in environment before load_dotenv.")
+    else:
+        logger.debug("GEMINI_API_KEY not found in environment before load_dotenv. Attempting to load from .env.")
+        dotenv_path = find_dotenv()
+        if dotenv_path:
+            logger.debug(f"find_dotenv() found .env file at: {dotenv_path}")
+            load_dotenv(dotenv_path, override=True)
+            logger.debug("load_dotenv() called.")
+        else:
+            logger.warning("find_dotenv() did not find a .env file.")
+
         api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            logger.error("GEMINI_API_KEY not found in environment or .env file.")
+        if api_key:
+            logger.debug("GEMINI_API_KEY found after load_dotenv.")
+        else:
+            logger.error("GEMINI_API_KEY not found in environment or .env file after load_dotenv.")
             return None
+
     try:
+        # Use genai.configure for global configuration as before
+        # Access configure via the imported genai
         genai.configure(api_key=api_key)
         logger.info("Gemini API configured successfully.")
         return api_key
@@ -164,26 +188,46 @@ def initialize_model(model_name: str, safety_settings: List[Union[SafetySettingD
         raise RuntimeError(f"Failed to initialize Gemini model: {e}") from e
 
 def prepare_content_parts(prompt: str, image_optional: Optional[torch.Tensor], model_name: str) -> Tuple[List[Any], Optional[str]]:
-    """Prepares the list of content parts (text and optional image)."""
+    """
+    Prepares the list of content parts (text and optional image),
+    using types.Part if available, aligning with documentation examples.
+    Handles image conversion and potential errors.
+    """
     content_parts: List[Any] = [prompt]
     error_msg: Optional[str] = None
 
     if image_optional is not None:
         logger.debug("Processing optional image input.")
-        try:
-            if callable(tensor_to_pil):
+        # Check if tensor_to_pil is callable AND not the dummy function defined in the except block
+        # Comparing __code__ is a way to check if it's the specific dummy function
+        if callable(tensor_to_pil) and getattr(tensor_to_pil, '__code__', None) != (lambda *args, **kwargs: None).__code__:
+            try:
                 pil_image: Optional[PilImageT] = tensor_to_pil(image_optional)
                 if pil_image:
                     logger.debug("Successfully converted image tensor to PIL Image.")
-                    content_parts.append(pil_image)
+                    # Convert PIL Image to bytes and use types.Part.from_bytes if types is available
+                    if types and hasattr(types, 'Part') and hasattr(types.Part, 'from_bytes'):
+                        import io
+                        img_byte_arr = io.BytesIO()
+                        # Save as JPEG for common compatibility, quality 90
+                        pil_image.save(img_byte_arr, format='JPEG', quality=90)
+                        img_bytes = img_byte_arr.getvalue()
+                        content_parts.append(types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'))
+                        logger.debug("Added image as types.Part.from_bytes.")
+                    else:
+                        # Fallback to appending PIL Image directly if types.Part is not available
+                        content_parts.append(pil_image)
+                        logger.debug("Added image as PIL Image (types.Part not available).")
                 else:
-                    logger.warning("tensor_to_pil returned None. Check input tensor format.")
-            else:
-                logger.error("tensor_to_pil function is not available due to import errors.")
-                error_msg = f"{ERROR_PREFIX} Image processing utility is unavailable."
-        except Exception as img_e:
-            logger.error(f"Failed to convert input tensor to PIL Image: {img_e}", exc_info=True)
-            error_msg = f"{ERROR_PREFIX} Failed to process input image: {img_e}"
+                    logger.error("tensor_to_pil returned None. Check input tensor format.")
+                    error_msg = f"{ERROR_PREFIX} Image conversion failed: tensor_to_pil returned None. Check input tensor format."
+            except Exception as img_e:
+                logger.error(f"An unexpected error occurred during image processing: {img_e}", exc_info=True)
+                error_msg = f"{ERROR_PREFIX} An unexpected error occurred during image processing: {type(img_e).__name__}: {img_e}"
+        else:
+            # This block is hit if tensor_to_pil is not callable or is the dummy function
+            logger.error("tensor_to_pil function is not available or is a dummy due to import errors.")
+            error_msg = f"{ERROR_PREFIX} Image processing utility is unavailable. Ensure 'shared_utils' is correctly installed/accessible."
     elif "vision" in model_name or "1.5" in model_name: # Broader check for multimodal models
         logger.warning(f"Multimodal model '{model_name}' selected, but no image provided.")
 
@@ -202,13 +246,24 @@ def process_api_response(response: Union[GenerateContentResponse, Any]) -> Tuple
         candidates = getattr(response, 'candidates', None)
         if not candidates:
             block_reason_code = "UNSPECIFIED"
+            prompt_feedback_msg = "No prompt feedback available."
             prompt_feedback = getattr(response, 'prompt_feedback', None)
-            if prompt_feedback and hasattr(prompt_feedback, 'block_reason'):
-                block_reason_obj = getattr(prompt_feedback, 'block_reason', None)
-                block_reason_code = getattr(block_reason_obj, 'name', str(block_reason_obj))
+            if prompt_feedback:
+                if hasattr(prompt_feedback, 'block_reason'):
+                    block_reason_obj = getattr(prompt_feedback, 'block_reason', None)
+                    block_reason_code = getattr(block_reason_obj, 'name', str(block_reason_obj))
+                if hasattr(prompt_feedback, 'safety_ratings'):
+                    ratings = getattr(prompt_feedback, 'safety_ratings', [])
+                    ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings])
+                    prompt_feedback_msg = f"Prompt Feedback Safety Ratings: [{ratings_str}]"
+                elif hasattr(prompt_feedback, 'block_reason'):
+                     prompt_feedback_msg = f"Prompt Block Reason: {block_reason_code}"
+                else:
+                     prompt_feedback_msg = f"Prompt Feedback: {prompt_feedback}"
 
-            error_msg = f"{ERROR_PREFIX} Blocked/Failed: Generation failed. Block Reason: {block_reason_code}."
-            logger.error(error_msg + " Check prompt feedback for details.")
+
+            error_msg = f"{ERROR_PREFIX} Blocked/Failed: Generation failed. Reason: {block_reason_code}. {prompt_feedback_msg}"
+            logger.error(error_msg)
             return error_msg, error_msg # Return error as both text and block message
 
         # Assume at least one candidate if the list exists
