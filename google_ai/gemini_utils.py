@@ -243,7 +243,7 @@ def generate_content(
 
         # Prepare contents list based on documentation examples
         contents: List[Any] = []
-        if image_part:
+        if image_part is not None: # Changed from 'if image_part:'
             contents.append(image_part)
         contents.append(prompt) # Add prompt after image as per best practices
 
