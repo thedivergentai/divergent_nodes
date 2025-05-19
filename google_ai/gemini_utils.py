@@ -54,10 +54,18 @@ PilImageT: TypeAlias = Image.Image
 
 # --- Constants ---
 DEFAULT_MODELS: List[str] = [
-    "models/gemini-1.5-pro-latest",
-    "models/gemini-1.5-flash-latest",
-    "models/gemini-1.0-pro",
-    "models/gemini-pro-vision",
+    "models/gemini-2.5-flash-preview-04-17",
+    "models/gemini-2.5-pro-preview-05-06",
+    "models/gemini-2.0-flash",
+    "models/gemini-2.0-flash-preview-image-generation",
+    "models/gemini-2.0-flash-lite",
+    "models/gemini-1.5-flash",
+    "models/gemini-1.5-flash-8b",
+    "models/gemini-1.5-pro",
+    "models/gemini-embedding-exp",
+    "models/imagen-3.0-generate-002",
+    "models/veo-2.0-generate-001",
+    "models/gemini-2.0-flash-live-001",
 ]
 
 SAFETY_SETTINGS_MAP: Dict[str, str] = {
