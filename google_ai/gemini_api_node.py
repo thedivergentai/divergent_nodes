@@ -7,15 +7,24 @@ import logging
 import torch
 from typing import Optional, Dict, Any, Tuple
 
+"""
+ComfyUI node for interacting with the Google Gemini API.
+Supports text generation and multimodal input (text + image).
+Configuration is handled via config.json or node input override.
+"""
+import logging
+import torch
+from typing import Optional, Dict, Any, Tuple
+
 # Import necessary functions and constants from the new utils module
 from .gemini_utils import (
     get_available_models,
     configure_api_key,
     prepare_safety_settings,
     prepare_generation_config,
-    initialize_model,
+    generate_content_via_client, # Use the client-based generation function
     prepare_content_parts,
-    process_api_response,
+    process_api_response, # Keep if needed for processing responses outside generate_content_via_client
     SAFETY_SETTINGS_MAP,
     SAFETY_THRESHOLD_TO_NAME,
     ERROR_PREFIX,
@@ -38,14 +47,25 @@ class GeminiNode:
     A ComfyUI node to interact with the Google Gemini API for text generation,
     optionally using an image input for multimodal models.
 
-    Requires a `GEMINI_API_KEY` environment variable (e.g., in a `.env` file
-    in the ComfyUI root or a parent directory). It dynamically fetches the list
-    of available models supporting content generation when ComfyUI loads the node.
+    Configuration is handled via config.json or the node's api_key_override input.
+    It dynamically fetches the list of available models supporting content generation
+    when ComfyUI loads the node, using the configured API key.
     """
-    # Fetch models using the utility function
-    # Need to configure API key first to fetch models dynamically
-    _api_key_for_init = configure_api_key() # Load API key during node initialization
-    AVAILABLE_MODELS = get_available_models(_api_key_for_init) # Pass API key to fetch models
+    # Fetch models using the utility function during class initialization
+    # This requires an API key to be available at this stage, which might be
+    # problematic if it only exists in config.json or node input.
+    # A more robust approach might be to fetch models dynamically in the execute
+    # function or provide a static list and allow user to override.
+    # For now, we'll attempt to load the key and fetch models here,
+    # but be aware this might fail if the key isn't in env vars at load time.
+    _api_key_for_init = configure_api_key() # Attempt to load API key for model fetching
+    AVAILABLE_MODELS = get_available_models(_api_key_for_init) if _api_key_for_init else [] # Fetch models if key is available
+    if not AVAILABLE_MODELS:
+        logger.warning("Could not fetch dynamic model list during node init. Using default list from gemini_utils.")
+        # Fallback to the default list defined in gemini_utils if dynamic fetch fails
+        from .gemini_utils import DEFAULT_MODELS as FALLBACK_MODELS
+        AVAILABLE_MODELS = FALLBACK_MODELS
+
     SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
 
     # Define ComfyUI node attributes
@@ -68,9 +88,16 @@ class GeminiNode:
         # Select a reasonable default model
         default_model = ""
         if cls.AVAILABLE_MODELS:
-             flash_latest = next((m for m in cls.AVAILABLE_MODELS if "flash-latest" in m), None)
-             pro_latest = next((m for m in cls.AVAILABLE_MODELS if "pro-latest" in m), None)
-             default_model = flash_latest or pro_latest or cls.AVAILABLE_MODELS[0]
+             # Prefer models with 'flash' or 'pro' and 'latest' if available
+             preferred_models = [m for m in cls.AVAILABLE_MODELS if "flash" in m or "pro" in m]
+             latest_preferred = next((m for m in preferred_models if "latest" in m), None)
+             any_preferred = next((m for m in preferred_models), None)
+             default_model = latest_preferred or any_preferred or cls.AVAILABLE_MODELS[0]
+        else:
+             # If dynamic list is empty, use a common default from the fallback list
+             from .gemini_utils import DEFAULT_MODELS as FALLBACK_MODELS
+             default_model = next((m for m in FALLBACK_MODELS if "flash" in m or "pro" in m), FALLBACK_MODELS[0] if FALLBACK_MODELS else "")
+
 
         logger.debug(f"Setting up INPUT_TYPES. Default model: '{default_model}'. Default safety: '{default_safety}'.")
 
@@ -89,6 +116,7 @@ class GeminiNode:
             },
             "optional": {
                  "image_optional": ("IMAGE", {"tooltip": "Optional image input for multimodal models (e.g., gemini-pro-vision, gemini-1.5-*)."}),
+                 "api_key_override": ("STRING", {"multiline": False, "default": "", "tooltip": "Optional API key override. If provided, this key will be used instead of the one in config.json or environment variables."}),
             }
         }
 
@@ -106,6 +134,7 @@ class GeminiNode:
         safety_sexually_explicit: str,
         safety_dangerous_content: str,
         image_optional: Optional[torch.Tensor] = None,
+        api_key_override: str = "" # Add api_key_override as an input parameter
     ) -> Tuple[str]:
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
@@ -113,10 +142,11 @@ class GeminiNode:
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
 
-        # 1. Load API Key using utility function
-        api_key = configure_api_key() # Get the API key string
+        # 1. Load API Key using utility function, passing the override
+        api_key = configure_api_key(api_key_override=api_key_override) # Pass the override here
         if not api_key:
-            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Check environment/.env."
+            final_output = f"{ERROR_PREFIX} GOOGLE_API_KEY not found. Check config.json, node input, or environment variables."
+            logger.error(final_output) # Use error level for missing key
             logger.info("Gemini Node: Execution finished due to API key error.")
             return (final_output,)
 
@@ -129,29 +159,28 @@ class GeminiNode:
                 temperature, top_p, top_k, max_output_tokens
             )
 
-            # 3. Initialize Model using utility function, passing the API key
-            gemini_model = initialize_model(api_key, model, safety_settings, generation_config)
-
             # Ensure prompt is UTF-8 friendly
             safe_prompt = ensure_utf8_friendly(prompt)
 
-            # 4. Prepare Content Parts using utility function
+            # 3. Prepare Content Parts using utility function
             content_parts, img_error = prepare_content_parts(safe_prompt, image_optional, model)
             if img_error:
                 # Raise error to be caught by generic handler below
                 raise RuntimeError(img_error)
 
-            # 5. Call API
-            logger.info(f"Sending request to Gemini API model '{model}'...")
-            if not hasattr(gemini_model, 'generate_content'):
-                 raise TypeError(f"Initialized model object of type {type(gemini_model)} does not have 'generate_content' method.")
-            response = gemini_model.generate_content(content_parts)
+            # 4. Call API using the client-based utility function
+            # This function now handles client initialization and content generation
+            final_output, response_error_msg = generate_content_via_client(
+                api_key=api_key,
+                model_name=model,
+                contents=content_parts,
+                generation_config=generation_config,
+                safety_settings=safety_settings
+            )
 
-            # 6. Process Response using utility function
-            # process_api_response returns (text_or_processing_error, api_block_error_msg)
-            processed_text, response_error_msg = process_api_response(response)
-            # Prioritize showing the API block error message if it exists
-            final_output = response_error_msg if response_error_msg else processed_text
+            # The generate_content_via_client function already processes the response
+            # and returns the final output or an error message.
+            # No need to call process_api_response here again.
 
         # Handle potential Google API errors if sdk types were imported
         except google_exceptions.GoogleAPIError as e:
