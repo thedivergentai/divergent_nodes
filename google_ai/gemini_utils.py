@@ -126,14 +126,15 @@ def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
 
     # 1. Check override first
     if api_key_override and api_key_override.strip():
-        logger.debug("Using API key from override.")
-        return api_key_override.strip()
+        api_key = api_key_override.strip()
+        logger.debug(f"Using API key from override: {api_key[:4]}...") # Log first few chars
+        return api_key
 
     # 2. Load config from config.json
     config = load_config()
     api_key = config.get("GOOGLE_API_KEY")
     if api_key:
-        logger.debug("GOOGLE_API_KEY found in config.json.")
+        logger.debug(f"GOOGLE_API_KEY found in config.json: {api_key[:4]}...") # Log first few chars
         return api_key
 
     # 3. Fallback to environment variable (less preferred)
@@ -145,7 +146,7 @@ def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
     # 4. Fallback to old GEMINI_API_KEY environment variable (deprecated)
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key:
-        logger.warning("Using deprecated GEMINI_API_KEY from environment variable. Consider renaming to GOOGLE_API_KEY and moving to config.json.")
+        logger.warning(f"Using deprecated GEMINI_API_KEY from environment variable: {api_key[:4]}... Consider renaming to GOOGLE_API_KEY and moving to config.json.") # Log first few chars
         return api_key
 
     logger.error("GOOGLE_API_KEY or GEMINI_API_KEY not found in config.json or environment.")
