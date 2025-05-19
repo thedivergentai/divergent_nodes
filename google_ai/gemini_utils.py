@@ -174,6 +174,46 @@ def prepare_image_part(image_tensor: torch.Tensor) -> Tuple[Optional[types.Part]
         logger.error(error_msg, exc_info=True)
         return None, error_msg
 
+def prepare_content_parts(prompt: str, image_tensor: Optional[torch.Tensor] = None, model_name: str = "") -> Tuple[List[Any], Optional[str]]:
+    """
+    Prepares the content parts list for the Gemini API generate_content method.
+    Handles text and optional image input.
+    Returns a tuple: (content_parts_list, error_message).
+    """
+    logger.debug("Preparing content parts.")
+    contents: List[Any] = []
+    error_msg: Optional[str] = None
+
+    # Add text prompt
+    contents.append(prompt)
+
+    # Add image part if provided and model supports vision
+    # Note: This is a simplified check. A more robust check might involve
+    # fetching model capabilities or using a predefined list of vision models.
+    # For now, assume models with "vision" or "image" in their name support it.
+    model_name_lower = model_name.lower()
+    supports_vision = "vision" in model_name_lower or "image" in model_name_lower or "pro" in model_name_lower or "flash" in model_name_lower # Broad check for common multimodal models
+
+    if image_tensor is not None and supports_vision:
+        image_part, img_error = prepare_image_part(image_tensor)
+        if img_error:
+            error_msg = f"{ERROR_PREFIX} Failed to prepare image part: {img_error}"
+            logger.error(error_msg)
+            # Decide whether to return immediately or proceed with just text
+            # For now, return the error and no content parts
+            return [], error_msg
+        if image_part:
+            # Add image part before text as per some examples, or after.
+            # Let's add it before for multimodal prompts.
+            contents.insert(0, image_part)
+            logger.debug("Image part added to contents.")
+    elif image_tensor is not None and not supports_vision:
+         logger.warning(f"Image input provided but model '{model_name}' may not support vision. Proceeding with text only.")
+
+
+    logger.debug(f"Prepared contents: {contents}")
+    return contents, error_msg
+
 def generate_content(
     api_key: str,
     model_name: str,
