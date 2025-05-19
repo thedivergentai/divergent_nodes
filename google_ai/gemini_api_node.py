@@ -14,7 +14,7 @@ from .gemini_utils import (
     prepare_safety_settings,
     prepare_generation_config,
     prepare_content_parts,
-    process_api_response,
+    generate_content, # Import the updated generate_content
     SAFETY_SETTINGS_MAP,
     SAFETY_THRESHOLD_TO_NAME,
     ERROR_PREFIX,
@@ -159,11 +159,18 @@ class GeminiNode:
                 ),
             )
 
-            # 6. Process Response using utility function
-            # process_api_response returns (text_or_processing_error, api_block_error_msg)
-            processed_text, response_error_msg = process_api_response(response)
+            # 6. Process Response using the updated generate_content return values
+            # generate_content now returns (generated_text_or_error, api_block_error_msg)
+            generated_text, response_error_msg = generate_content(
+                api_key=api_key,
+                model_name=model,
+                prompt=safe_prompt,
+                image_part=image_optional, # Pass the image tensor here
+                generation_config=generation_config,
+                safety_settings=safety_settings
+            )
             # Prioritize showing the API block error message if it exists
-            final_output = response_error_msg if response_error_msg else processed_text
+            final_output = response_error_msg if response_error_msg else generated_text
 
         # Handle potential Google API errors if sdk types were imported
         except google_exceptions.GoogleAPIError as e:
