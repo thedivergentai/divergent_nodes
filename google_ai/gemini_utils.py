@@ -124,11 +124,11 @@ def prepare_safety_settings(safety_harassment: str, safety_hate_speech: str,
         threshold=threshold_map.get(safety_hate_speech, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")
     ))
     settings.append(types.SafetySetting(
-        category=category_map.get("Sexually explicit", "HARM_CATEGORY_UNSPECIFIED"),
+        category=category_map.get("Sexually explicit", "HARM_CATEGORY_SEXUALLY_EXPLICIT"),
         threshold=threshold_map.get(safety_sexually_explicit, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")
     ))
     settings.append(types.SafetySetting(
-        category=category_map.get("Dangerous", "HARM_CATEGORY_UNSPECIFIED"),
+        category=category_map.get("Dangerous", "HARM_CATEGORY_DANGEROUS_CONTENT"),
         threshold=threshold_map.get(safety_dangerous_content, "HARM_BLOCK_THRESHOLD_UNSPECIFIED")
     ))
 
@@ -293,7 +293,7 @@ def generate_content(
              response_error_msg = f"{ERROR_PREFIX} Error parsing API response: {type(e).__name__}."
              return response_error_msg, None # Return processing error, no specific API block
 
-        final_output = generated_text if not response_error_msg else response_error_msg
+        final_output = generated_text if not response_error_msg else final_output
 
     except google_exceptions.GoogleAPIError as e:
          if google_exceptions:
@@ -321,6 +321,7 @@ def generate_content(
 
     logger.info("Content generation finished.")
     return final_output, response_error_msg # Return text (or processing error) and potential block message
+
 
 # Note: get_available_models is still needed for INPUT_TYPES in the node file.
 # It should also use genai.Client(api_key=api_key).models.list()

@@ -5,7 +5,7 @@ Requires a GEMINI_API_KEY environment variable.
 """
 import logging
 import torch
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Tuple
 
 # Import necessary functions and constants from the new utils module
 from .gemini_utils import (
@@ -13,7 +13,6 @@ from .gemini_utils import (
     configure_api_key,
     prepare_safety_settings,
     prepare_generation_config,
-    initialize_model,
     prepare_content_parts,
     process_api_response,
     SAFETY_SETTINGS_MAP,
@@ -24,6 +23,10 @@ from .gemini_utils import (
 
 # Import shared utility for text encoding
 from ..shared_utils.text_encoding_utils import ensure_utf8_friendly
+
+# Import genai and types for direct API interaction
+from google import genai
+from google.genai import types
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -129,23 +132,32 @@ class GeminiNode:
                 temperature, top_p, top_k, max_output_tokens
             )
 
-            # 3. Initialize Model using utility function, passing the API key
-            gemini_model = initialize_model(api_key, model, safety_settings, generation_config)
-
             # Ensure prompt is UTF-8 friendly
             safe_prompt = ensure_utf8_friendly(prompt)
 
-            # 4. Prepare Content Parts using utility function
+            # 3. Prepare Content Parts using utility function
             content_parts, img_error = prepare_content_parts(safe_prompt, image_optional, model)
             if img_error:
                 # Raise error to be caught by generic handler below
                 raise RuntimeError(img_error)
 
-            # 5. Call API
+            # 4. Instantiate client with the provided API key
+            client = genai.Client(api_key=api_key)
+            logger.debug("genai.Client instantiated for content generation.")
+
+            # 5. Call API using client.models.generate_content
             logger.info(f"Sending request to Gemini API model '{model}'...")
-            if not hasattr(gemini_model, 'generate_content'):
-                 raise TypeError(f"Initialized model object of type {type(gemini_model)} does not have 'generate_content' method.")
-            response = gemini_model.generate_content(content_parts)
+            response = client.models.generate_content(
+                model=model,
+                contents=content_parts,
+                config=types.GenerateContentConfig( # Pass a single config object
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    max_output_tokens=max_output_tokens,
+                    safety_settings=safety_settings # Include safety settings here
+                ),
+            )
 
             # 6. Process Response using utility function
             # process_api_response returns (text_or_processing_error, api_block_error_msg)
