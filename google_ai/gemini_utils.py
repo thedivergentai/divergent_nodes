@@ -202,10 +202,9 @@ def prepare_content_parts(prompt: str, image_tensor: Optional[torch.Tensor] = No
             # Decide whether to return immediately or proceed with just text
             # For now, return the error and no content parts
             return [], error_msg
-        if image_part:
-            # Add image part before text as per some examples, or after.
-            # Let's add it before for multimodal prompts.
-            contents.insert(0, image_part)
+        if image_part is not None: # Use explicit check
+            # Add image part after text as per documentation examples
+            contents.append(image_part)
             logger.debug("Image part added to contents.")
     elif image_tensor is not None and not supports_vision:
          logger.warning(f"Image input provided but model '{model_name}' may not support vision. Proceeding with text only.")
@@ -217,13 +216,12 @@ def prepare_content_parts(prompt: str, image_tensor: Optional[torch.Tensor] = No
 def generate_content(
     api_key: str,
     model_name: str,
-    prompt: str,
-    image_part: Optional[types.Part] = None,
+    contents: List[Any], # Accept contents list directly
     generation_config: Optional[types.GenerateContentConfig] = None, # Expect types.GenerateContentConfig
     safety_settings: Optional[List[types.SafetySetting]] = None, # Expect List[types.SafetySetting]
 ) -> Tuple[str, Optional[str]]:
     """
-    Generates content using genai.Client based on text and optional image parts,
+    Generates content using genai.Client based on a list of content parts,
     with optional generation config and safety settings.
     Returns a tuple: (generated_text_or_error, api_block_error_msg).
     """
@@ -240,12 +238,6 @@ def generate_content(
         # Instantiate client with the provided API key
         client = genai.Client(api_key=api_key)
         logger.debug("genai.Client instantiated for content generation.")
-
-        # Prepare contents list based on documentation examples
-        contents: List[Any] = []
-        if image_part is not None: # Changed from 'if image_part:'
-            contents.append(image_part)
-        contents.append(prompt) # Add prompt after image as per best practices
 
         # Create the single GenerateContentConfig object
         # Combine generation_config and safety_settings here
@@ -265,7 +257,7 @@ def generate_content(
         # Use client.models.generate_content with the single config argument
         response = client.models.generate_content(
             model=model_name,
-            contents=contents,
+            contents=contents, # Use the passed-in contents list
             config=full_config, # Pass the combined config object
         )
 

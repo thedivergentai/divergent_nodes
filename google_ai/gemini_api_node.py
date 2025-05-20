@@ -164,8 +164,7 @@ class GeminiNode:
             generated_text, response_error_msg = generate_content(
                 api_key=api_key,
                 model_name=model,
-                prompt=safe_prompt,
-                image_part=image_optional, # Pass the image tensor here
+                contents=content_parts, # Pass the prepared content_parts list
                 generation_config=generation_config,
                 safety_settings=safety_settings
             )
