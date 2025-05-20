@@ -95,8 +95,10 @@ class SaveImageEnhancedNode:
         # Use ComfyUI's path helper to get base filename and initial counter
         # We will modify the filename later based on add_counter_suffix
         # The counter returned here is based on existing files matching the prefix pattern
+        # Strip leading/trailing whitespace from filename_prefix
+        cleaned_filename_prefix = filename_prefix.strip()
         _, base_filename_without_counter, initial_counter, subfolder, _ = folder_paths.get_save_image_path(
-            filename_prefix, full_output_folder, images[0].shape[1], images[0].shape[0]
+            cleaned_filename_prefix, full_output_folder, images[0].shape[1], images[0].shape[0]
         )
 
         current_counter = initial_counter
