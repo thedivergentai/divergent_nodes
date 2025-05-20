@@ -147,37 +147,12 @@ def prepare_generation_config(temperature: float, top_p: float, top_k: int,
     )
 
 
-def prepare_image_part(image_tensor: torch.Tensor) -> Tuple[Optional[types.Part], Optional[str]]:
-    """
-    Converts a ComfyUI image tensor to a Gemini API types.Part for inline use.
-    Returns a tuple: (image_part, error_message).
-    """
-    logger.debug("Preparing image part from tensor.")
-    try:
-        pil_image: Optional[PilImageT] = tensor_to_pil(image_tensor)
-        if pil_image:
-            logger.debug("Successfully converted image tensor to PIL Image.")
-            img_byte_arr = io.BytesIO()
-            # Save as JPEG for common compatibility
-            pil_image.save(img_byte_arr, format='JPEG', quality=90)
-            img_bytes = img_byte_arr.getvalue()
-            # Use types.Part.from_bytes as shown in documentation
-            image_part = types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg')
-            logger.debug("Created image types.Part.")
-            return image_part, None
-        else:
-            error_msg = f"{ERROR_PREFIX} Image conversion failed: tensor_to_pil returned None. Check input tensor format."
-            logger.error(error_msg)
-            return None, error_msg
-    except Exception as e:
-        error_msg = f"{ERROR_PREFIX} Error during image processing for API: {type(e).__name__}: {e}"
-        logger.error(error_msg, exc_info=True)
-        return None, error_msg
+# prepare_image_part function is removed as per refactoring plan
 
 def prepare_content_parts(prompt: str, image_tensor: Optional[torch.Tensor] = None, model_name: str = "") -> Tuple[List[Any], Optional[str]]:
     """
-    Prepares the content parts list for the Gemini API generate_content method.
-    Handles text and optional image input.
+    Prepares the initial content parts list for the Gemini API generate_content method,
+    primarily handling text and determining if an image should be included.
     Returns a tuple: (content_parts_list, error_message).
     """
     logger.debug("Preparing content parts.")
@@ -187,30 +162,16 @@ def prepare_content_parts(prompt: str, image_tensor: Optional[torch.Tensor] = No
     # Add text prompt
     contents.append(prompt)
 
-    # Add image part if provided and model supports vision
-    # Note: This is a simplified check. A more robust check might involve
-    # fetching model capabilities or using a predefined list of vision models.
-    # For now, assume models with "vision" or "image" in their name support it.
+    # Determine if image should be included based on model support
     model_name_lower = model_name.lower()
     supports_vision = "vision" in model_name_lower or "image" in model_name_lower or "pro" in model_name_lower or "flash" in model_name_lower # Broad check for common multimodal models
 
-    if image_tensor is not None and supports_vision:
-        image_part, img_error = prepare_image_part(image_tensor)
-        if img_error:
-            error_msg = f"{ERROR_PREFIX} Failed to prepare image part: {img_error}"
-            logger.error(error_msg)
-            # Decide whether to return immediately or proceed with just text
-            # For now, return the error and no content parts
-            return [], error_msg
-        if image_part is not None: # Use explicit check
-            # Add image part after text as per documentation examples
-            contents.append(image_part)
-            logger.debug("Image part added to contents.")
-    elif image_tensor is not None and not supports_vision:
+    # Note: Image part creation is now handled in the node's generate method
+
+    if image_tensor is not None and not supports_vision:
          logger.warning(f"Image input provided but model '{model_name}' may not support vision. Proceeding with text only.")
 
-
-    logger.debug(f"Prepared contents: {contents}")
+    logger.debug(f"Prepared initial contents: {contents}")
     return contents, error_msg
 
 def generate_content(

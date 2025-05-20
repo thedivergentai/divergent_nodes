@@ -5,7 +5,9 @@ Requires a GEMINI_API_KEY environment variable.
 """
 import logging
 import torch
+import io # Import io for BytesIO
 from typing import Optional, Dict, Tuple, Any
+from PIL import Image # Import Image for tensor_to_pil
 
 # Import necessary functions and constants from the new utils module
 from .gemini_utils import (
@@ -13,7 +15,7 @@ from .gemini_utils import (
     configure_api_key,
     prepare_safety_settings,
     prepare_generation_config,
-    prepare_content_parts,
+    prepare_content_parts, # Keep prepare_content_parts for initial text handling
     generate_content, # Import the updated generate_content
     SAFETY_SETTINGS_MAP,
     SAFETY_THRESHOLD_TO_NAME,
@@ -21,8 +23,9 @@ from .gemini_utils import (
     google_exceptions # Import for exception handling
 )
 
-# Import shared utility for text encoding
+# Import shared utilities
 from ..shared_utils.text_encoding_utils import ensure_utf8_friendly
+from ..shared_utils.image_conversion import tensor_to_pil # Import tensor_to_pil
 
 # Import genai and types for direct API interaction
 from google import genai
@@ -135,32 +138,49 @@ class GeminiNode:
             # Ensure prompt is UTF-8 friendly
             safe_prompt = ensure_utf8_friendly(prompt)
 
-            # 3. Prepare Content Parts using utility function
+            # 3. Prepare initial Content Parts (text only) using utility function
             content_parts, img_error = prepare_content_parts(safe_prompt, image_optional, model)
             if img_error:
                 # Raise error to be caught by generic handler below
                 raise RuntimeError(img_error)
 
-            # 4. Instantiate client with the provided API key
-            client = genai.Client(api_key=api_key)
-            logger.debug("genai.Client instantiated for content generation.")
+            # 4. Handle optional image input and add to content_parts if provided and supported
+            model_name_lower = model.lower()
+            supports_vision = "vision" in model_name_lower or "image" in model_name_lower or "pro" in model_name_lower or "flash" in model_name_lower # Broad check for common multimodal models
 
-            # 5. Call API using client.models.generate_content
-            logger.info(f"Sending request to Gemini API model '{model}'...")
-            response = client.models.generate_content(
-                model=model,
-                contents=content_parts,
-                config=types.GenerateContentConfig( # Pass a single config object
-                    temperature=temperature,
-                    top_p=top_p,
-                    top_k=top_k,
-                    max_output_tokens=max_output_tokens,
-                    safety_settings=safety_settings # Include safety settings here
-                ),
-            )
+            if image_optional is not None and supports_vision:
+                logger.debug("Processing image input for multimodal model.")
+                try:
+                    pil_image: Optional[Image.Image] = tensor_to_pil(image_optional)
+                    if pil_image:
+                        logger.debug("Successfully converted image tensor to PIL Image.")
+                        img_byte_arr = io.BytesIO()
+                        # Save as JPEG for common compatibility
+                        pil_image.save(img_byte_arr, format='JPEG', quality=90)
+                        img_bytes = img_byte_arr.getvalue()
+                        # Create types.Part.from_bytes directly here
+                        image_part = types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg')
+                        logger.debug("Created image types.Part.")
+                        # Add image part to the content_parts list
+                        content_parts.append(image_part)
+                        logger.debug("Image part added to content_parts.")
+                    else:
+                        error_msg = f"{ERROR_PREFIX} Image conversion failed: tensor_to_pil returned None. Check input tensor format."
+                        logger.error(error_msg)
+                        # Decide whether to raise error or proceed with just text
+                        # For now, raise the error
+                        raise RuntimeError(error_msg)
+                except Exception as e:
+                    error_msg = f"{ERROR_PREFIX} Error during image processing for API: {type(e).__name__}: {e}"
+                    logger.error(error_msg, exc_info=True)
+                    raise RuntimeError(error_msg) # Re-raise the error
 
-            # 6. Process Response using the updated generate_content return values
-            # generate_content now returns (generated_text_or_error, api_block_error_msg)
+            elif image_optional is not None and not supports_vision:
+                 logger.warning(f"Image input provided but model '{model}' may not support vision. Proceeding with text only.")
+
+
+            # 5. Call API using the updated generate_content function
+            # generate_content now accepts the contents list directly
             generated_text, response_error_msg = generate_content(
                 api_key=api_key,
                 model_name=model,
