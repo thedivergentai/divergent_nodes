@@ -112,11 +112,10 @@ class SaveImageEnhancedNode:
                 metadata = PngInfo()
                 if prompt is not None:
                     # Ensure prompt metadata is UTF-8 friendly
-                    metadata.add_text("prompt", ensure_utf8_friendly(prompt))
+                    metadata.add_text("prompt", json.dumps(ensure_utf8_friendly(prompt)))
                 if extra_pnginfo is not None:
                     for x in extra_pnginfo:
-                         # Ensure extra_pnginfo metadata is UTF-8 friendly
-                        metadata.add_text(x, ensure_utf8_friendly(extra_pnginfo[x]))
+                        metadata.add_text(x, json.dumps(extra_pnginfo[x]))
 
             # Construct the filename based on prefix, batch number, and optional counter
             # Replace %batch_num% placeholder
