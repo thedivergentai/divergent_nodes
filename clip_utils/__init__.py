@@ -1,5 +1,9 @@
 # Expose node classes from this module
 from .token_counter_node import CLIPTokenCounter
+from ..shared_utils.logging_utils import setup_node_logging
+
+# Setup logging for this node package
+setup_node_logging()
 
 # Define mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
