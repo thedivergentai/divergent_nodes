@@ -27,7 +27,7 @@ class MusiQNode:
             "required": {
                 "image": ("IMAGE",),
                 "aesthetic_model": (["AVA"], {"default": "AVA"}),
-                "technical_model": (["KonIQ-10k", "SPAQ", "PaQ-2-PiQ"], {"default": "SPAQ"}),
+                "technical_model": (["KonIQ-10k", "SPAQ", "PaQ-2-PiQ"], {"default": "KonIQ-10k"}),
                 "score_aesthetic": ("BOOLEAN", {"default": True}),
                 "score_technical": ("BOOLEAN", {"default": False}),
             }
