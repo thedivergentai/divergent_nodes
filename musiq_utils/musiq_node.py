@@ -69,20 +69,27 @@ class MusiQNode:
             if technical_score == 0.0 and score_technical:
                 error_message += "Technical scoring failed or model not loaded. "
             
-            # Calculate final average score
-            scores_to_average = []
-            if score_aesthetic and aesthetic_score != 0.0:
-                scores_to_average.append(aesthetic_score)
-            if score_technical and technical_score != 0.0:
-                scores_to_average.append(technical_score)
-
-            if scores_to_average:
-                average_score = sum(scores_to_average) / len(scores_to_average)
-                final_average_score_10 = int(round(average_score / 10)) # Scale to 10, assuming original is out of 100
-                final_average_score_100 = int(round(average_score)) # Already out of 100
-            else:
-                final_average_score_10 = 0
-                final_average_score_100 = 0
+            # Calculate final average score based on enabled options and correct scaling
+            average_score_out_of_100 = 0.0
+            
+            if score_aesthetic and score_technical:
+                # Both enabled: normalize aesthetic to 100, then average 50/50
+                normalized_aesthetic_score = aesthetic_score * 10 # Scale 0-10 to 0-100
+                if normalized_aesthetic_score != 0.0 and technical_score != 0.0:
+                    average_score_out_of_100 = (normalized_aesthetic_score + technical_score) / 2
+                elif normalized_aesthetic_score != 0.0:
+                    average_score_out_of_100 = normalized_aesthetic_score
+                elif technical_score != 0.0:
+                    average_score_out_of_100 = technical_score
+            elif score_aesthetic:
+                # Only aesthetic enabled: scale aesthetic to 100
+                average_score_out_of_100 = aesthetic_score * 10
+            elif score_technical:
+                # Only technical enabled: use technical score directly (already out of 100)
+                average_score_out_of_100 = technical_score
+            
+            final_average_score_10 = int(round(average_score_out_of_100 / 10))
+            final_average_score_100 = int(round(average_score_out_of_100))
             
             if error_message:
                 logger.error(f"MusiQNode encountered issues: {error_message.strip()}")
