@@ -78,8 +78,8 @@ class MusiQNode:
 
             if scores_to_average:
                 average_score = sum(scores_to_average) / len(scores_to_average)
-                final_average_score_10 = int(round(average_score))
-                final_average_score_100 = int(round(average_score * 10)) # Scale to 100, assuming original is out of 10
+                final_average_score_10 = int(round(average_score / 10)) # Scale to 10, assuming original is out of 100
+                final_average_score_100 = int(round(average_score)) # Already out of 100
             else:
                 final_average_score_10 = 0
                 final_average_score_100 = 0
