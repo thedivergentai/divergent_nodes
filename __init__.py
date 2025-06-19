@@ -38,6 +38,13 @@ try:
 except ImportError as e:
     print(f"[WARN] Failed to import image_utils nodes: {e}")
 
+try:
+    from .musiq_utils import NODE_CLASS_MAPPINGS as musiq_utils_class_mappings, NODE_DISPLAY_NAME_MAPPINGS as musiq_utils_display_mappings
+    NODE_CLASS_MAPPINGS.update(musiq_utils_class_mappings)
+    NODE_DISPLAY_NAME_MAPPINGS.update(musiq_utils_display_mappings)
+except ImportError as e:
+    print(f"[WARN] Failed to import musiq_utils nodes: {e}")
+
 
 # Expose the aggregated mappings for ComfyUI
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']

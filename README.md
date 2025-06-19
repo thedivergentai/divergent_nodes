@@ -43,6 +43,29 @@ This pack currently includes the following nodes:
 *   **KoboldCpp API Connector** (`Divergent Nodes 👽/KoboldCpp`): Connects to an *already running* KoboldCpp instance for text generation.
 *   **LoRA Strength XY Plot** (`Divergent Nodes 👽/XY Plots`): Generates an image grid comparing different LoRAs (X-axis) against varying model strengths (Y-axis).
 *   **Save Image Enhanced** (`👽 Divergent Nodes/Image`): Saves images with enhanced options including custom output folder, filename prefixing, and optional caption saving.
+*   **MusiQ Image Scorer** (`Divergent AI 👽/Image`): Scores images based on aesthetic and technical quality using Google's MusiQ models.
+
+---
+
+### MusiQ Image Scorer
+
+Scores images based on aesthetic and technical quality using Google's MusiQ models. It allows you to select which type of scoring to perform (aesthetic, technical, or both) and which specific technical model to use.
+
+**Inputs:**
+
+*   `image` (IMAGE): The image to be scored.
+*   `aesthetic_model` (COMBO): The aesthetic model to use (currently only `AVA`).
+*   `technical_model` (COMBO): The technical model to use (`KonIQ-10k`, `SPAQ`, `PaQ-2-PiQ`).
+*   `score_aesthetic` (BOOLEAN): Enable/disable aesthetic scoring.
+*   `score_technical` (BOOLEAN): Enable/disable technical scoring.
+
+**Outputs:**
+
+*   `AESTHETIC_SCORE` (FLOAT): The aesthetic quality score (0.0 if disabled or error).
+*   `TECHNICAL_SCORE` (FLOAT): The technical quality score (0.0 if disabled or error).
+*   `ERROR_MESSAGE` (STRING): Any error or warning messages during scoring.
+
+**Category:** `Divergent AI 👽/Image`
 
 ---
 
