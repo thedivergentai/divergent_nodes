@@ -36,7 +36,7 @@ class MusiQNode:
     RETURN_TYPES = ("FLOAT", "FLOAT", "STRING",)
     RETURN_NAMES = ("AESTHETIC_SCORE", "TECHNICAL_SCORE", "ERROR_MESSAGE",)
     FUNCTION = "score_image"
-    CATEGORY = "Divergent AI 👽/Image"
+    CATEGORY = "👽 Divergent Nodes"
     OUTPUT_NODE = True # This node primarily outputs scores, not images for further processing
 
     def score_image(self, image: torch.Tensor, aesthetic_model: str, technical_model: str, score_aesthetic: bool, score_technical: bool):
