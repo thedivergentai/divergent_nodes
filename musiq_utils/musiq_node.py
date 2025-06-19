@@ -33,21 +33,23 @@ class MusiQNode:
             }
         }
 
-    RETURN_TYPES = ("FLOAT", "FLOAT", "STRING",)
-    RETURN_NAMES = ("AESTHETIC_SCORE", "TECHNICAL_SCORE", "ERROR_MESSAGE",)
+    RETURN_TYPES = ("FLOAT", "FLOAT", "INT", "INT", "STRING",)
+    RETURN_NAMES = ("AESTHETIC_SCORE", "TECHNICAL_SCORE", "FINAL_AVERAGE_SCORE_OUT_OF_10", "FINAL_AVERAGE_SCORE_OUT_OF_100", "ERROR_MESSAGE",)
     FUNCTION = "score_image"
-    CATEGORY = "👽 Divergent Nodes"
+    CATEGORY = "👽 Divergent Nodes/MusiQ"
     OUTPUT_NODE = True # This node primarily outputs scores, not images for further processing
 
     def score_image(self, image: torch.Tensor, aesthetic_model: str, technical_model: str, score_aesthetic: bool, score_technical: bool):
         aesthetic_score = 0.0
         technical_score = 0.0
+        final_average_score_10 = 0
+        final_average_score_100 = 0
         error_message = ""
 
         if not score_aesthetic and not score_technical:
             error_message = "ERROR: At least one scoring option (Aesthetic or Technical) must be enabled."
             logger.error(error_message)
-            return (aesthetic_score, technical_score, error_message)
+            return (aesthetic_score, technical_score, final_average_score_10, final_average_score_100, error_message)
 
         try:
             # Convert ComfyUI tensor image to PIL Image
@@ -67,6 +69,21 @@ class MusiQNode:
             if technical_score == 0.0 and score_technical:
                 error_message += "Technical scoring failed or model not loaded. "
             
+            # Calculate final average score
+            scores_to_average = []
+            if score_aesthetic and aesthetic_score != 0.0:
+                scores_to_average.append(aesthetic_score)
+            if score_technical and technical_score != 0.0:
+                scores_to_average.append(technical_score)
+
+            if scores_to_average:
+                average_score = sum(scores_to_average) / len(scores_to_average)
+                final_average_score_10 = int(round(average_score))
+                final_average_score_100 = int(round(average_score * 10)) # Scale to 100, assuming original is out of 10
+            else:
+                final_average_score_10 = 0
+                final_average_score_100 = 0
+            
             if error_message:
                 logger.error(f"MusiQNode encountered issues: {error_message.strip()}")
 
@@ -75,5 +92,7 @@ class MusiQNode:
             logger.error(error_message, exc_info=True)
             aesthetic_score = 0.0
             technical_score = 0.0
+            final_average_score_10 = 0
+            final_average_score_100 = 0
 
-        return (aesthetic_score, technical_score, error_message.strip())
+        return (aesthetic_score, technical_score, final_average_score_10, final_average_score_100, error_message.strip())
