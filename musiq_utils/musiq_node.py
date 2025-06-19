@@ -3,7 +3,7 @@ from PIL import Image
 import numpy as np
 import logging
 
-from ..shared_utils.image_conversion import tensor_to_pil, pil_to_tensor
+from ..shared_utils.image_conversion import tensor_to_pil
 from .musiq_scorer import MusiQScorer
 
 logger = logging.getLogger(__name__)
