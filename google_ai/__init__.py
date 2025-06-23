@@ -1,9 +1,7 @@
 # Expose node classes from this module
 from .gemini_api_node import GeminiNode
-from ..shared_utils.logging_utils import setup_node_logging
-
-# Setup logging for this node package
-setup_node_logging()
+# Removed logging setup from __init__.py to prevent potential import issues during ComfyUI startup.
+# Logging is handled within individual node files or via ComfyUI's default logging.
 
 # Define mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
