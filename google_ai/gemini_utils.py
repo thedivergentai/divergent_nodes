@@ -316,34 +316,46 @@ def generate_content(
     return final_output, response_error_msg # Return text (or processing error) and potential block message
 
 
-# Note: get_available_models is still needed for INPUT_TYPES in the node file.
-# It should also use genai.Client(api_key=api_key).models.list()
-def get_available_models(api_key: Optional[str]) -> List[str]:
-    """Fetches available Gemini models supporting 'generateContent' using genai.Client."""
-    logger.debug("Attempting to fetch available Gemini models...")
+# This function is now designed to be called at node initialization (INPUT_TYPES)
+# It attempts to fetch models if an API key is available, otherwise uses a default list.
+def get_available_models_robust(api_key: Optional[str]) -> List[str]:
+    """
+    Fetches available Gemini models supporting 'generateContent' using genai.Client.
+    If API key is invalid or fetching fails, it falls back to DEFAULT_MODELS.
+    """
+    logger.debug("Attempting to fetch available Gemini models robustly...")
+    
     if not api_key:
-         logger.warning("API key not provided. Cannot fetch dynamic model list.")
-         return DEFAULT_MODELS
+        logger.info("No API key provided at startup. Using default model list.")
+        return DEFAULT_MODELS
 
     try:
-        # Instantiate client with the provided API key
-        client = genai.Client(api_key=api_key)
-        logger.debug("genai.Client instantiated for model listing.")
+        # Configure the genai library with the API key
+        genai.configure(api_key=api_key, transport='rest')
+        logger.debug("genai configured for model listing.")
 
-        # Use client.models.list() as shown in documentation
+        # Use genai.list_models() to fetch models
+        # Filter for models that support generateContent
         model_list: List[str] = [
-            m.name for m in client.models.list()
-            if 'generateContent' in m.supported_actions # Corrected attribute name
+            m.name for m in genai.list_models()
+            if 'generateContent' in m.supported_actions
         ]
+        
         if not model_list:
-             logger.warning("No models supporting 'generateContent' found via API. Using default list.")
-             return DEFAULT_MODELS
+            logger.warning("No models supporting 'generateContent' found via API. Using default list.")
+            return DEFAULT_MODELS
+        
+        # Sort models for consistent display, putting 'latest' versions first
         model_list.sort(key=lambda x: ('latest' not in x, x))
-        logger.info(f"Fetched {len(model_list)} models supporting 'generateContent' from Gemini API.")
+        logger.info(f"Successfully fetched {len(model_list)} models from Gemini API.")
         return model_list
-    except ImportError as e:
-         logger.error(f"Google SDK import failed: {e}. Using default list.", exc_info=True)
-         return DEFAULT_MODELS
+    
+    except google_exceptions.GoogleAPIError as e:
+        error_msg = f"Error fetching Gemini models: {getattr(e, 'code', 'N/A')} {e.message}"
+        logger.error(error_msg, exc_info=True)
+        logger.warning("Failed to fetch models from Gemini API due to API error. Using default list.")
+        return DEFAULT_MODELS
     except Exception as e:
-        logger.error(f"Failed to fetch models from Gemini API: {e}. Using default list.", exc_info=True)
+        logger.error(f"An unexpected error occurred while fetching Gemini models: {e}", exc_info=True)
+        logger.warning("Failed to fetch models from Gemini API due to unexpected error. Using default list.")
         return DEFAULT_MODELS

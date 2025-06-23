@@ -1,50 +1,56 @@
-# Import mappings from each node package
-# Using try-except blocks for robustness in case a package fails to load
+import os
+import sys
+import logging
+
+# Setup a basic logger for the main __init__.py
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Define the base directory for custom nodes
+# This assumes the __init__.py is directly inside the custom node folder
+NODE_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Initialize mappings
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
-try:
-    from .clip_utils import NODE_CLASS_MAPPINGS as clip_utils_class_mappings, NODE_DISPLAY_NAME_MAPPINGS as clip_utils_display_mappings
-    NODE_CLASS_MAPPINGS.update(clip_utils_class_mappings)
-    NODE_DISPLAY_NAME_MAPPINGS.update(clip_utils_display_mappings)
-except ImportError as e:
-    print(f"[WARN] Failed to import clip_utils nodes: {e}")
+# List of node sub-packages to import
+NODE_PACKAGES = [
+    "clip_utils",
+    "google_ai",
+    "xy_plotting",
+    "koboldcpp",
+    "image_utils",
+    "musiq_utils",
+]
 
-try:
-    from .google_ai import NODE_CLASS_MAPPINGS as google_ai_class_mappings, NODE_DISPLAY_NAME_MAPPINGS as google_ai_display_mappings
-    NODE_CLASS_MAPPINGS.update(google_ai_class_mappings)
-    NODE_DISPLAY_NAME_MAPPINGS.update(google_ai_display_mappings)
-except ImportError as e:
-    print(f"[WARN] Failed to import google_ai nodes: {e}")
+# Dynamically import mappings from each node package
+for package_name in NODE_PACKAGES:
+    try:
+        # Construct the full module path
+        module_path = f".{package_name}"
+        
+        # Import the module
+        module = __import__(module_path, fromlist=['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS'])
+        
+        # Update the global mappings
+        if hasattr(module, 'NODE_CLASS_MAPPINGS'):
+            NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
+            logger.info(f"Successfully loaded NODE_CLASS_MAPPINGS from {package_name}")
+        else:
+            logger.warning(f"Module {package_name} does not expose NODE_CLASS_MAPPINGS.")
 
-try:
-    from .xy_plotting import NODE_CLASS_MAPPINGS as xy_plotting_class_mappings, NODE_DISPLAY_NAME_MAPPINGS as xy_plotting_display_mappings
-    NODE_CLASS_MAPPINGS.update(xy_plotting_class_mappings)
-    NODE_DISPLAY_NAME_MAPPINGS.update(xy_plotting_display_mappings)
-except ImportError as e:
-    print(f"[WARN] Failed to import xy_plotting nodes: {e}")
+        if hasattr(module, 'NODE_DISPLAY_NAME_MAPPINGS'):
+            NODE_DISPLAY_NAME_MAPPINGS.update(module.NODE_DISPLAY_NAME_MAPPINGS)
+            logger.info(f"Successfully loaded NODE_DISPLAY_NAME_MAPPINGS from {package_name}")
+        else:
+            logger.warning(f"Module {package_name} does not expose NODE_DISPLAY_NAME_MAPPINGS.")
 
-try:
-    from .koboldcpp import NODE_CLASS_MAPPINGS as kobold_class_mappings, NODE_DISPLAY_NAME_MAPPINGS as kobold_display_mappings
-    NODE_CLASS_MAPPINGS.update(kobold_class_mappings)
-    NODE_DISPLAY_NAME_MAPPINGS.update(kobold_display_mappings)
-except ImportError as e:
-    print(f"[WARN] Failed to import koboldcpp nodes: {e}")
-
-try:
-    from .image_utils import NODE_CLASS_MAPPINGS as image_utils_class_mappings, NODE_DISPLAY_NAME_MAPPINGS as image_utils_display_mappings
-    NODE_CLASS_MAPPINGS.update(image_utils_class_mappings)
-    NODE_DISPLAY_NAME_MAPPINGS.update(image_utils_display_mappings)
-except ImportError as e:
-    print(f"[WARN] Failed to import image_utils nodes: {e}")
-
-try:
-    from .musiq_utils import NODE_CLASS_MAPPINGS as musiq_utils_class_mappings, NODE_DISPLAY_NAME_MAPPINGS as musiq_utils_display_mappings
-    NODE_CLASS_MAPPINGS.update(musiq_utils_class_mappings)
-    NODE_DISPLAY_NAME_MAPPINGS.update(musiq_utils_display_mappings)
-except ImportError as e:
-    print(f"[WARN] Failed to import musiq_utils nodes: {e}")
-
+    except ImportError as e:
+        logger.error(f"Failed to import nodes from package '{package_name}': {e}", exc_info=True)
+    except Exception as e:
+        logger.critical(f"An unexpected error occurred while loading nodes from package '{package_name}': {e}", exc_info=True)
 
 # Expose the aggregated mappings for ComfyUI
 WEB_DIRECTORY = "./js"

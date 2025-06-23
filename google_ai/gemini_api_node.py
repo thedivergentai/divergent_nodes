@@ -48,18 +48,6 @@ class GeminiNode:
     in the ComfyUI root or a parent directory). It dynamically fetches the list
     of available models supporting content generation when ComfyUI loads the node.
     """
-    # Define a static list of available models based on Google's documentation.
-    # This avoids dynamic API calls at startup and prevents node loading issues.
-    AVAILABLE_MODELS = [
-        "gemini-1.5-pro",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite-preview-06-17",
-    ]
     SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
 
     # Define ComfyUI node attributes
@@ -71,22 +59,37 @@ class GeminiNode:
     def __init__(self):
         """Initializes the Gemini node instance."""
         logger.debug("GeminiNode instance created.")
+        # Configure API key and fetch models during instance creation (lazy loading for INPUT_TYPES)
+        self.api_key = configure_api_key()
+        self.available_models = get_available_models_robust(self.api_key)
 
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Dict[str, Any]]:
         """
         Defines the input types and options for the ComfyUI node interface.
+        This method is called by ComfyUI to build the node's UI.
         """
+        # Create a dummy instance to access the dynamically loaded models
+        # This is the pattern seen in comfyui-ollamagemini for dynamic model lists
+        dummy_instance = cls()
+        available_models_for_input = dummy_instance.available_models
+
         # Determine default safety setting names using constants from utils
         default_safety = SAFETY_THRESHOLD_TO_NAME.get("BLOCK_MEDIUM_AND_ABOVE", cls.SAFETY_OPTIONS[0])
-        # Set a default model from the static list
+        # Set a default model from the dynamically fetched/default list
         default_model = "gemini-1.5-flash" # A good general-purpose default
+
+        # Ensure the default model is in the available list, if not, pick the first one
+        if default_model not in available_models_for_input and available_models_for_input:
+            default_model = available_models_for_input[0]
+        elif not available_models_for_input:
+            default_model = "No Models Available" # Fallback if list is empty
 
         logger.debug(f"Setting up INPUT_TYPES. Default model: '{default_model}'. Default safety: '{default_safety}'.")
 
         return {
             "required": {
-                "model": (cls.AVAILABLE_MODELS, {"default": default_model, "tooltip": "Select the Gemini model to use."}),
+                "model": (available_models_for_input, {"default": default_model, "tooltip": "Select the Gemini model to use."}),
                 "prompt": ("STRING", {"multiline": True, "default": "Describe the image.", "tooltip": "The text prompt for generation."}),
                 "temperature": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "Controls randomness. Higher values (e.g., 1.0) are more creative, lower values (e.g., 0.2) are more deterministic."}),
                 "top_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Nucleus sampling probability threshold (e.g., 0.95). 1.0 disables."}),
