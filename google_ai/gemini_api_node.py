@@ -11,7 +11,7 @@ from PIL import Image # Import Image for tensor_to_pil
 
 # Import necessary functions and constants from the new utils module
 from .gemini_utils import (
-    get_available_models,
+    get_available_models_robust, # Renamed from get_available_models
     configure_api_key,
     prepare_safety_settings,
     prepare_generation_config,
