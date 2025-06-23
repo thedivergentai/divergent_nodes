@@ -48,10 +48,18 @@ class GeminiNode:
     in the ComfyUI root or a parent directory). It dynamically fetches the list
     of available models supporting content generation when ComfyUI loads the node.
     """
-    # Fetch models using the utility function
-    # Need to configure API key first to fetch models dynamically
-    _api_key_for_init = configure_api_key() # Load API key during node initialization
-    AVAILABLE_MODELS = get_available_models(_api_key_for_init) # Pass API key to fetch models
+    # Define a static list of available models based on Google's documentation.
+    # This avoids dynamic API calls at startup and prevents node loading issues.
+    AVAILABLE_MODELS = [
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite-preview-06-17",
+    ]
     SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
 
     # Define ComfyUI node attributes
@@ -71,12 +79,8 @@ class GeminiNode:
         """
         # Determine default safety setting names using constants from utils
         default_safety = SAFETY_THRESHOLD_TO_NAME.get("BLOCK_MEDIUM_AND_ABOVE", cls.SAFETY_OPTIONS[0])
-        # Select a reasonable default model
-        default_model = ""
-        if cls.AVAILABLE_MODELS:
-             flash_latest = next((m for m in cls.AVAILABLE_MODELS if "flash-latest" in m), None)
-             pro_latest = next((m for m in cls.AVAILABLE_MODELS if "pro-latest" in m), None)
-             default_model = flash_latest or pro_latest or cls.AVAILABLE_MODELS[0]
+        # Set a default model from the static list
+        default_model = "gemini-1.5-flash" # A good general-purpose default
 
         logger.debug(f"Setting up INPUT_TYPES. Default model: '{default_model}'. Default safety: '{default_safety}'.")
 
@@ -119,10 +123,10 @@ class GeminiNode:
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
 
-        # 1. Load API Key using utility function
+        # Load API Key using utility function - this now happens only when the node is executed
         api_key = configure_api_key() # Get the API key string
         if not api_key:
-            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Check environment/.env."
+            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Please create a '.env' file in the 'source/' directory with your API key (e.g., GEMINI_API_KEY=\"your_key_here\")."
             logger.info("Gemini Node: Execution finished due to API key error.")
             return (final_output,)
 
