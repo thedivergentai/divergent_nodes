@@ -11,7 +11,6 @@ from PIL import Image # Import Image for tensor_to_pil
 
 # Import necessary functions and constants from the new utils module
 from .gemini_utils import (
-    get_available_models_robust, # Renamed from get_available_models
     configure_api_key,
     prepare_safety_settings,
     prepare_generation_config,
@@ -48,6 +47,18 @@ class GeminiNode:
     in the ComfyUI root or a parent directory). It dynamically fetches the list
     of available models supporting content generation when ComfyUI loads the node.
     """
+    # Define a static list of available models. This list is hardcoded to ensure
+    # the node loads without any API calls or key checks at startup.
+    AVAILABLE_MODELS = [
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite-preview-06-17",
+    ]
     SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
 
     # Define ComfyUI node attributes
@@ -57,39 +68,26 @@ class GeminiNode:
     CATEGORY: str = "👽 Divergent Nodes/Gemini"
 
     def __init__(self):
-        """Initializes the Gemini node instance."""
+        """Initializes the Gemini node instance. No API calls are made here."""
         logger.debug("GeminiNode instance created.")
-        # Configure API key and fetch models during instance creation (lazy loading for INPUT_TYPES)
-        self.api_key = configure_api_key()
-        self.available_models = get_available_models_robust(self.api_key)
 
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Dict[str, Any]]:
         """
         Defines the input types and options for the ComfyUI node interface.
         This method is called by ComfyUI to build the node's UI.
+        It is static and does not perform any API calls.
         """
-        # Create a dummy instance to access the dynamically loaded models
-        # This is the pattern seen in comfyui-ollamagemini for dynamic model lists
-        dummy_instance = cls()
-        available_models_for_input = dummy_instance.available_models
-
         # Determine default safety setting names using constants from utils
         default_safety = SAFETY_THRESHOLD_TO_NAME.get("BLOCK_MEDIUM_AND_ABOVE", cls.SAFETY_OPTIONS[0])
-        # Set a default model from the dynamically fetched/default list
+        # Set a default model from the static list
         default_model = "gemini-1.5-flash" # A good general-purpose default
-
-        # Ensure the default model is in the available list, if not, pick the first one
-        if default_model not in available_models_for_input and available_models_for_input:
-            default_model = available_models_for_input[0]
-        elif not available_models_for_input:
-            default_model = "No Models Available" # Fallback if list is empty
 
         logger.debug(f"Setting up INPUT_TYPES. Default model: '{default_model}'. Default safety: '{default_safety}'.")
 
         return {
             "required": {
-                "model": (available_models_for_input, {"default": default_model, "tooltip": "Select the Gemini model to use."}),
+                "model": (cls.AVAILABLE_MODELS, {"default": default_model, "tooltip": "Select the Gemini model to use."}),
                 "prompt": ("STRING", {"multiline": True, "default": "Describe the image.", "tooltip": "The text prompt for generation."}),
                 "temperature": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "Controls randomness. Higher values (e.g., 1.0) are more creative, lower values (e.g., 0.2) are more deterministic."}),
                 "top_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Nucleus sampling probability threshold (e.g., 0.95). 1.0 disables."}),
@@ -102,6 +100,7 @@ class GeminiNode:
             },
             "optional": {
                  "image_optional": ("IMAGE", {"tooltip": "Optional image input for multimodal models (e.g., gemini-pro-vision, gemini-1.5-*)."}),
+                 "api_key_override": ("STRING", {"multiline": False, "default": "", "tooltip": "Optional: Override API key for this node run. Takes precedence over .env/config.json."}),
             }
         }
 
@@ -119,6 +118,7 @@ class GeminiNode:
         safety_sexually_explicit: str,
         safety_dangerous_content: str,
         image_optional: Optional[torch.Tensor] = None,
+        api_key_override: str = "", # New parameter for API key override
     ) -> Tuple[str]:
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
@@ -126,10 +126,10 @@ class GeminiNode:
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
 
-        # Load API Key using utility function - this now happens only when the node is executed
-        api_key = configure_api_key() # Get the API key string
+        # Determine API key to use: override > configure_api_key()
+        api_key = api_key_override.strip() if api_key_override.strip() else configure_api_key()
         if not api_key:
-            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Please create a '.env' file in the 'source/' directory with your API key (e.g., GEMINI_API_KEY=\"your_key_here\")."
+            final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Please provide in 'API Key Override' or set in .env/config.json."
             logger.info("Gemini Node: Execution finished due to API key error.")
             return (final_output,)
 
