@@ -1,7 +1,7 @@
 torch
 huggingface_hub
 transformers
-google-generativeai
+google-genai
 Pillow
 python-dotenv
 requests # Added for API calls
