@@ -1,13 +1,7 @@
 from .musiq_node import MusiQNode
-from ..shared_utils.logging_utils import setup_node_logging
 
-# Setup logging for this node package
-setup_node_logging()
+# This __init__.py no longer defines NODE_CLASS_MAPPINGS or NODE_DISPLAY_NAME_MAPPINGS
+# as they are now centralized in source/node_registration.py.
+# The setup_node_logging() call has also been removed from here.
 
-NODE_CLASS_MAPPINGS = {
-    "MusiQNode": MusiQNode
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "MusiQNode": "MusiQ Image Scorer"
-}
+__all__ = ['MusiQNode']

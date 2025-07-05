@@ -1,18 +1,8 @@
 # Expose node classes from this module
 from .lora_strength_plot_node import LoraStrengthXYPlot
-from ..shared_utils.logging_utils import setup_node_logging
 
-# Setup logging for this node package
-setup_node_logging()
+# This __init__.py no longer defines NODE_CLASS_MAPPINGS or NODE_DISPLAY_NAME_MAPPINGS
+# as they are now centralized in source/node_registration.py.
+# The setup_node_logging() call has also been removed from here.
 
-# Define mappings for ComfyUI
-NODE_CLASS_MAPPINGS = {
-    "LoraStrengthXYPlot": LoraStrengthXYPlot,
-}
-
-# Optional: Define display names if different from class names
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "LoraStrengthXYPlot": "XY Plot: LoRA/Strength",
-}
-
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+__all__ = ['LoraStrengthXYPlot']

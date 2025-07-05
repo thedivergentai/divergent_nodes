@@ -1,17 +1,8 @@
-# Node mappings for the image_utils package
-
+# Expose node classes from this module
 from .save_image_enhanced_node import SaveImageEnhancedNode
-from ..shared_utils.logging_utils import setup_node_logging
 
-# Setup logging for this node package
-setup_node_logging()
+# This __init__.py no longer defines NODE_CLASS_MAPPINGS or NODE_DISPLAY_NAME_MAPPINGS
+# as they are now centralized in source/node_registration.py.
+# The setup_node_logging() call has also been removed from here.
 
-NODE_CLASS_MAPPINGS = {
-    "SaveImageEnhancedNode": SaveImageEnhancedNode
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "SaveImageEnhancedNode": "Save Image Enhanced (DN)"
-}
-
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+__all__ = ['SaveImageEnhancedNode']
