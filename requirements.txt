@@ -1,7 +1,7 @@
 torch
 huggingface_hub
 transformers
-google-generativeai
+google-genai
 tensorflow
 tensorflow_hub
 Pillow
