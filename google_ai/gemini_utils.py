@@ -149,10 +149,10 @@ def prepare_generation_config(temperature: float, top_p: float, top_k: int,
 
 # prepare_image_part function is removed as per refactoring plan
 
-def prepare_content_parts(prompt: str, image_tensor: Optional[torch.Tensor] = None, model_name: str = "") -> Tuple[List[Any], Optional[str]]:
+def prepare_content_parts(prompt: str) -> Tuple[List[Any], Optional[str]]:
     """
     Prepares the initial content parts list for the Gemini API generate_content method,
-    primarily handling text and determining if an image should be included.
+    primarily handling text. Image parts are expected to be added by the calling node.
     Returns a tuple: (content_parts_list, error_message).
     """
     logger.debug("Preparing content parts.")
@@ -161,15 +161,6 @@ def prepare_content_parts(prompt: str, image_tensor: Optional[torch.Tensor] = No
 
     # Add text prompt
     contents.append(prompt)
-
-    # Determine if image should be included based on model support
-    model_name_lower = model_name.lower()
-    supports_vision = "vision" in model_name_lower or "image" in model_name_lower or "pro" in model_name_lower or "flash" in model_name_lower # Broad check for common multimodal models
-
-    # Note: Image part creation is now handled in the node's generate method
-
-    if image_tensor is not None and not supports_vision:
-         logger.warning(f"Image input provided but model '{model_name}' may not support vision. Proceeding with text only.")
 
     logger.debug(f"Prepared initial contents: {contents}")
     return contents, error_msg
@@ -284,7 +275,7 @@ def generate_content(
         except (IndexError, AttributeError, TypeError) as e:
              logger.error(f"Error accessing response structure: {type(e).__name__}: {e}. Check API response format.", exc_info=True)
              response_error_msg = f"{ERROR_PREFIX} Error parsing API response: {type(e).__name__}."
-             return response_error_msg, None # Return processing error, no specific API block
+             return response_error_msg, response_error_msg # Return processing error, no specific API block
 
         final_output = generated_text if not response_error_msg else final_output
 

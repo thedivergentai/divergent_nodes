@@ -130,8 +130,18 @@ class SaveImageEnhancedNode:
 
             file_path = os.path.join(full_output_folder, file)
 
-            # Save the image
-            img.save(file_path, pnginfo=metadata, compress_level=self.compress_level)
+            try:
+                # Save the image
+                img.save(file_path, pnginfo=metadata, compress_level=self.compress_level)
+                logger.info(f"Image saved successfully: {file_path}")
+            except IOError as e:
+                error_msg = f"ERROR: Failed to save image to {file_path}: {e}"
+                logger.error(error_msg, exc_info=True)
+                return (error_msg,) # Return error and stop processing this batch
+            except Exception as e:
+                error_msg = f"ERROR: An unexpected error occurred while saving image to {file_path}: {e}"
+                logger.error(error_msg, exc_info=True)
+                return (error_msg,) # Return error and stop processing this batch
 
             # Save the caption if provided
             if caption is not None:
@@ -145,9 +155,22 @@ class SaveImageEnhancedNode:
 
                 txt_file_path = os.path.join(full_output_folder, txt_file)
 
-                # Save the caption with UTF-8 encoding and sanitization
-                with open(txt_file_path, 'w', encoding='utf-8') as f:
-                    f.write(ensure_utf8_friendly(caption))
+                try:
+                    # Save the caption with UTF-8 encoding and sanitization
+                    with open(txt_file_path, 'w', encoding='utf-8') as f:
+                        f.write(ensure_utf8_friendly(caption))
+                    logger.info(f"Caption saved successfully: {txt_file_path}")
+                except IOError as e:
+                    error_msg = f"ERROR: Failed to save caption to {txt_file_path}: {e}"
+                    logger.error(error_msg, exc_info=True)
+                    # Continue with image saving, but log caption error
+                    # Decide if this should halt the node or just log
+                    # For now, log and continue for image, but return error if it's the only output
+                    pass # Do not return here, let image saving proceed/complete
+                except Exception as e:
+                    error_msg = f"ERROR: An unexpected error occurred while saving caption to {txt_file_path}: {e}"
+                    logger.error(error_msg, exc_info=True)
+                    pass # Do not return here
 
             results.append({
                 "filename": file,

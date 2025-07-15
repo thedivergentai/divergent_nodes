@@ -146,10 +146,10 @@ class GeminiNode:
             safe_prompt = ensure_utf8_friendly(prompt)
 
             # 3. Prepare initial Content Parts (text only) using utility function
-            content_parts, img_error = prepare_content_parts(safe_prompt, image_optional, model)
-            if img_error:
+            content_parts, error_msg_from_prepare = prepare_content_parts(safe_prompt)
+            if error_msg_from_prepare:
                 # Raise error to be caught by generic handler below
-                raise RuntimeError(img_error)
+                raise RuntimeError(error_msg_from_prepare)
 
             # 4. Handle optional image input and add to content_parts if provided and supported
             model_name_lower = model.lower()
@@ -198,18 +198,11 @@ class GeminiNode:
             # Prioritize showing the API block error message if it exists
             final_output = response_error_msg if response_error_msg else generated_text
 
-        # Handle potential Google API errors if sdk types were imported
+        # Handle potential Google API errors
         except google_exceptions.GoogleAPIError as e:
-             # Check if google_exceptions was successfully imported before using it
-             if google_exceptions:
-                 error_msg = f"{ERROR_PREFIX} Google API Error - Status: {getattr(e, 'code', 'N/A')}, Message: {e}"
-                 logger.error(error_msg, exc_info=True)
-                 final_output = f"{ERROR_PREFIX} A Google API error occurred ({getattr(e, 'code', 'N/A')}). Check console logs."
-             else:
-                 # Fallback if specific exception types aren't available
-                 error_msg = f"{ERROR_PREFIX} An API error occurred: {e}"
-                 logger.error(error_msg, exc_info=True)
-                 final_output = f"{ERROR_PREFIX} An API error occurred. Check console logs."
+            error_msg = f"{ERROR_PREFIX} Google API Error - Status: {getattr(e, 'code', 'N/A')}, Message: {e}"
+            logger.error(error_msg, exc_info=True)
+            final_output = f"{ERROR_PREFIX} A Google API error occurred ({getattr(e, 'code', 'N/A')}). Check console logs."
 
         # Catch broader errors during the overall process
         except Exception as e:
