@@ -15,10 +15,10 @@ class MusiQNode:
     def __init__(self):
         self.musiq_scorer = MusiQScorer()
         self.model_urls = {
-            "AVA": "https://tfhub.dev/google/musiq/ava/1",
-            "KonIQ-10k": "https://tfhub.dev/google/musiq/koniq-10k/1",
-            "SPAQ": "https://tfhub.dev/google/musiq/spaq/1",
-            "PaQ-2-PiQ": "https://tfhub.dev/google/musiq/paq2piq/1"
+            "AVA": "https://www.kaggle.com/models/google/musiq/frameworks/TensorFlow2/variations/ava/versions/1",
+            "KonIQ-10k": "https://www.kaggle.com/models/google/musiq/frameworks/TensorFlow2/variations/koniq-10k/versions/1",
+            "SPAQ": "https://www.kaggle.com/models/google/musiq/frameworks/TensorFlow2/variations/spaq/versions/1",
+            "PaQ-2-PiQ": "https://www.kaggle.com/models/google/musiq/frameworks/TensorFlow2/variations/paq2piq/versions/1"
         }
 
     @classmethod
