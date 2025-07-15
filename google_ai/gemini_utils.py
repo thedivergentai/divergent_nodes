@@ -260,21 +260,24 @@ def generate_content(
                     logger.warning(f"Generation finished with reason: {finish_reason_name}")
 
                 content = getattr(candidate, 'content', None)
-                if content and getattr(content, 'parts', None):
-                    parts_list = getattr(content, 'parts', [])
-                    generated_text = "".join(getattr(part, 'text', '') for part in parts_list)
-                    if generated_text:
-                        logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_name}")
-                        return generated_text, None # Success, return immediately
-                    else:
-                        status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_name}. Retrying..."
-                        logger.warning(status_msg)
-                        # This is a transient issue, retry
-                        raise RuntimeError(status_msg) # Raise to trigger retry logic
-                else:
+                if content is None:
+                    status_msg = f"Response received but candidate content is None. Finish Reason: {finish_reason_name}. Retrying..."
+                    logger.warning(status_msg)
+                    raise RuntimeError(status_msg) # Raise to trigger retry logic
+
+                if not getattr(content, 'parts', None):
                     status_msg = f"Response received but no valid content parts found. Finish Reason: {finish_reason_name}. Retrying..."
                     logger.warning(status_msg)
-                    # This is a transient issue, retry
+                    raise RuntimeError(status_msg) # Raise to trigger retry logic
+
+                parts_list = getattr(content, 'parts', [])
+                generated_text = "".join(getattr(part, 'text', '') for part in parts_list)
+                if generated_text:
+                    logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_name}")
+                    return generated_text, None # Success, return immediately
+                else:
+                    status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_name}. Retrying..."
+                    logger.warning(status_msg)
                     raise RuntimeError(status_msg) # Raise to trigger retry logic
 
             except (IndexError, AttributeError, TypeError) as e:
