@@ -243,9 +243,8 @@ def generate_content(
                 finish_reason_name = getattr(finish_reason_obj, 'name', str(finish_reason_obj))
 
                 if finish_reason_name == 'SAFETY':
-                    ratings = getattr(candidate, 'safety_ratings', [])
-                    if ratings is None: # Explicitly check if ratings is None
-                        ratings = [] # Default to empty list if it's None
+                    raw_ratings = getattr(candidate, 'safety_ratings', None) # Get raw value, could be None
+                    ratings = raw_ratings if raw_ratings is not None else [] # Ensure it's a list, even if raw is None
                     ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings])
                     response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
                     logger.error(response_error_msg)
