@@ -2,3 +2,7 @@ torch
 huggingface_hub
 transformers
 google-generativeai
+tensorflow
+tensorflow_hub
+Pillow
+python-dotenv
