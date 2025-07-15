@@ -21,7 +21,7 @@ NODE_CLASS_MAPPINGS = {
 # Define the master NODE_DISPLAY_NAME_MAPPINGS
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CLIPTokenCounter": "CLIP Token Counter",
-    "GeminiNode": "Gemini API Node",
+    "GeminiNode": "Divergent Gemini Node",
     "LoraStrengthXYPlot": "XY Plot: LoRA/Strength",
     "KoboldCppApiNode": "KoboldCpp API Connector (Basic)",
     "SaveImageEnhancedNode": "Save Image Enhanced (DN)",
@@ -29,4 +29,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 }
 
 # Optional: Define a common category for all nodes if desired, or keep individual categories in node classes
-# CATEGORY = "Divergent AI 👽"
+CATEGORY = "Divergent AI 👽"

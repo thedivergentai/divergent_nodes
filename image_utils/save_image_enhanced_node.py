@@ -72,7 +72,7 @@ class SaveImageEnhancedNode:
 
     OUTPUT_NODE = True
 
-    CATEGORY = "👽 Divergent Nodes/Image" # New category for Divergent Nodes
+    CATEGORY = "Divergent Nodes 👽/Image" # New category for Divergent Nodes
     DESCRIPTION = "Saves the input images to a specified directory with optional caption and filename counter."
 
     def save_images(self, images, output_folder, filename_prefix="ComfyUI_DN_%date:yyyy-MM-dd%", add_counter_suffix=True, prompt=None, extra_pnginfo=None, caption=None, caption_file_extension=".txt"):

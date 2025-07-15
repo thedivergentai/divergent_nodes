@@ -65,7 +65,7 @@ class GeminiNode:
     RETURN_TYPES: Tuple[str] = ("STRING",)
     RETURN_NAMES: Tuple[str] = ("text",)
     FUNCTION: str = "generate"
-    CATEGORY: str = "👽 Divergent Nodes/Gemini"
+    CATEGORY: str = "Divergent Nodes 👽/Gemini"
 
     def __init__(self):
         """Initializes the Gemini node instance. No API calls are made here."""
@@ -101,6 +101,8 @@ class GeminiNode:
             "optional": {
                  "image_optional": ("IMAGE", {"tooltip": "Optional image input for multimodal models (e.g., gemini-pro-vision, gemini-1.5-*)."}),
                  "api_key_override": ("STRING", {"multiline": False, "default": "", "tooltip": "Optional: Override API key for this node run. Takes precedence over .env/config.json."}),
+                 "max_retries": ("INT", {"default": 3, "min": 0, "max": 10, "step": 1, "tooltip": "Maximum number of retries for transient API errors."}),
+                 "retry_delay_seconds": ("INT", {"default": 5, "min": 1, "max": 60, "step": 1, "tooltip": "Delay in seconds between retries."}),
             }
         }
 
@@ -118,7 +120,9 @@ class GeminiNode:
         safety_sexually_explicit: str,
         safety_dangerous_content: str,
         image_optional: Optional[torch.Tensor] = None,
-        api_key_override: str = "", # New parameter for API key override
+        api_key_override: str = "",
+        max_retries: int = 3,
+        retry_delay_seconds: int = 5,
     ) -> Tuple[str]:
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
@@ -191,9 +195,11 @@ class GeminiNode:
             generated_text, response_error_msg = generate_content(
                 api_key=api_key,
                 model_name=model,
-                contents=content_parts, # Pass the prepared content_parts list
+                contents=content_parts,
                 generation_config=generation_config,
-                safety_settings=safety_settings
+                safety_settings=safety_settings,
+                max_retries=max_retries,
+                retry_delay_seconds=retry_delay_seconds
             )
             # Prioritize showing the API block error message if it exists
             final_output = response_error_msg if response_error_msg else generated_text

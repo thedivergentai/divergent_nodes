@@ -39,7 +39,7 @@ class KoboldCppApiNode:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("text",)
     FUNCTION = "execute"
-    CATEGORY = "👽 Divergent Nodes/KoboldCpp" # Keep category consistent
+    CATEGORY = "Divergent Nodes 👽/KoboldCpp" # Keep category consistent
 
     def __init__(self):
         """Initializes the API Connector node instance."""

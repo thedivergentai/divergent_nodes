@@ -171,140 +171,143 @@ def generate_content(
     contents: List[Any], # Accept contents list directly
     generation_config: Optional[types.GenerateContentConfig] = None, # Expect types.GenerateContentConfig
     safety_settings: Optional[List[types.SafetySetting]] = None, # Expect List[types.SafetySetting]
+    max_retries: int = 3, # New parameter for retry count
+    retry_delay_seconds: int = 5 # New parameter for delay between retries
 ) -> Tuple[str, Optional[str]]:
     """
     Generates content using genai.Client based on a list of content parts,
-    with optional generation config and safety settings.
+    with optional generation config and safety settings, and retry logic.
     Returns a tuple: (generated_text_or_error, api_block_error_msg).
     """
-    logger.info(f"Generating content for model: {model_name}")
+    logger.info(f"Generating content for model: {model_name} with {max_retries} retries.")
     final_output = ""
     response_error_msg: Optional[str] = None
+    current_retry = 0
 
     if not api_key:
         error_msg = f"{ERROR_PREFIX} API key not provided for generation."
         logger.error(error_msg)
         return error_msg, error_msg
 
-    try:
-        # Instantiate client with the provided API key
-        client = genai.Client(api_key=api_key)
-        logger.debug("genai.Client instantiated for content generation.")
-
-        # Create the single GenerateContentConfig object
-        # Combine generation_config and safety_settings here
-        full_config = types.GenerateContentConfig()
-        if generation_config:
-             # Copy parameters from the prepared generation_config object
-             full_config.temperature = generation_config.temperature
-             full_config.top_p = generation_config.top_p
-             full_config.top_k = generation_config.top_k
-             full_config.max_output_tokens = generation_config.max_output_tokens
-             # Add other generation config parameters if needed
-        if safety_settings:
-             full_config.safety_settings = safety_settings # Assign the list of SafetySetting objects
-
-
-        logger.debug(f"Sending request to Gemini API model '{model_name}'...")
-        # Use client.models.generate_content with the single config argument
-        response = client.models.generate_content(
-            model=model_name,
-            contents=contents, # Use the passed-in contents list
-            config=full_config, # Pass the combined config object
-        )
-
-        # Process Response
-        # This part is adapted from the previous process_api_response logic
-        generated_text: str = ""
+    while current_retry <= max_retries:
         try:
-            candidates = getattr(response, 'candidates', None)
-            if not candidates:
-                block_reason_code = "UNSPECIFIED"
-                prompt_feedback_msg = "No prompt feedback available."
-                prompt_feedback = getattr(response, 'prompt_feedback', None)
-                if prompt_feedback:
-                    if hasattr(prompt_feedback, 'block_reason'):
-                        block_reason_obj = getattr(prompt_feedback, 'block_reason', None)
-                        block_reason_code = getattr(block_reason_obj, 'name', str(block_reason_obj))
-                    if hasattr(prompt_feedback, 'safety_ratings'):
-                        ratings = getattr(prompt_feedback, 'safety_ratings', [])
-                        ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings])
-                        prompt_feedback_msg = f"Prompt Feedback Safety Ratings: [{ratings_str}]"
-                    elif hasattr(prompt_feedback, 'block_reason'):
-                         prompt_feedback_msg = f"Prompt Block Reason: {block_reason_code}"
+            # Instantiate client with the provided API key
+            client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+            logger.debug("genai.Client instantiated for content generation with v1alpha API.")
+
+            # Create the single GenerateContentConfig object
+            full_config = types.GenerateContentConfig()
+            if generation_config:
+                full_config.temperature = generation_config.temperature
+                full_config.top_p = generation_config.top_p
+                full_config.top_k = generation_config.top_k
+                full_config.max_output_tokens = generation_config.max_output_tokens
+            if safety_settings:
+                full_config.safety_settings = safety_settings
+
+            logger.debug(f"Sending request to Gemini API model '{model_name}' (Attempt {current_retry + 1}/{max_retries + 1})...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=full_config,
+            )
+
+            # Process Response
+            generated_text: str = ""
+            try:
+                candidates = getattr(response, 'candidates', None)
+                if not candidates:
+                    block_reason_code = "UNSPECIFIED"
+                    prompt_feedback_msg = "No prompt feedback available."
+                    prompt_feedback = getattr(response, 'prompt_feedback', None)
+                    if prompt_feedback:
+                        if hasattr(prompt_feedback, 'block_reason'):
+                            block_reason_obj = getattr(prompt_feedback, 'block_reason', None)
+                            block_reason_code = getattr(block_reason_obj, 'name', str(block_reason_obj))
+                        if hasattr(prompt_feedback, 'safety_ratings'):
+                            ratings = getattr(prompt_feedback, 'safety_ratings', [])
+                            ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings])
+                            prompt_feedback_msg = f"Prompt Feedback Safety Ratings: [{ratings_str}]"
+                        elif hasattr(prompt_feedback, 'block_reason'):
+                            prompt_feedback_msg = f"Prompt Block Reason: {block_reason_code}"
+                        else:
+                            prompt_feedback_msg = f"Prompt Feedback: {prompt_feedback}"
+
+                    response_error_msg = f"{ERROR_PREFIX} Blocked/Failed: Generation failed. Reason: {block_reason_code}. {prompt_feedback_msg}"
+                    logger.error(response_error_msg)
+                    # This is a content block, not a transient API error, so no retry
+                    return response_error_msg, response_error_msg
+
+                candidate = candidates[0]
+                finish_reason_obj = getattr(candidate, 'finish_reason', None)
+                finish_reason_name = getattr(finish_reason_obj, 'name', str(finish_reason_obj))
+
+                if finish_reason_name == 'SAFETY':
+                    ratings = getattr(candidate, 'safety_ratings', [])
+                    ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings])
+                    response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
+                    logger.error(response_error_msg)
+                    # Content block, no retry
+                    return response_error_msg, response_error_msg
+                elif finish_reason_name == 'RECITATION':
+                    response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped for potential recitation."
+                    logger.error(response_error_msg)
+                    # Content block, no retry
+                    return response_error_msg, response_error_msg
+                elif finish_reason_name == 'MAX_TOKENS':
+                    logger.warning("Generation stopped: Reached max_output_tokens limit.")
+                elif finish_reason_name not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', None]:
+                    logger.warning(f"Generation finished with reason: {finish_reason_name}")
+
+                content = getattr(candidate, 'content', None)
+                if content and getattr(content, 'parts', None):
+                    parts_list = getattr(content, 'parts', [])
+                    generated_text = "".join(getattr(part, 'text', '') for part in parts_list)
+                    if generated_text:
+                        logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_name}")
+                        return generated_text, None # Success, return immediately
                     else:
-                         prompt_feedback_msg = f"Prompt Feedback: {prompt_feedback}"
-
-                response_error_msg = f"{ERROR_PREFIX} Blocked/Failed: Generation failed. Reason: {block_reason_code}. {prompt_feedback_msg}"
-                logger.error(response_error_msg)
-                return response_error_msg, response_error_msg # Return error as both text and block message
-
-            candidate = candidates[0]
-            finish_reason_obj = getattr(candidate, 'finish_reason', None)
-            finish_reason_name = getattr(finish_reason_obj, 'name', str(finish_reason_obj))
-
-            if finish_reason_name == 'SAFETY':
-                ratings = getattr(candidate, 'safety_ratings', [])
-                ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings])
-                response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
-                logger.error(response_error_msg)
-                return response_error_msg, response_error_msg # Return error as both text and block message
-            elif finish_reason_name == 'RECITATION':
-                response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped for potential recitation."
-                logger.error(response_error_msg)
-                return response_error_msg, response_error_msg # Return error as both text and block message
-            elif finish_reason_name == 'MAX_TOKENS':
-                logger.warning("Generation stopped: Reached max_output_tokens limit.")
-            elif finish_reason_name not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', None]:
-                 logger.warning(f"Generation finished with reason: {finish_reason_name}")
-
-            content = getattr(candidate, 'content', None)
-            if content and getattr(content, 'parts', None):
-                parts_list = getattr(content, 'parts', [])
-                generated_text = "".join(getattr(part, 'text', '') for part in parts_list)
-                if generated_text:
-                    logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_name}")
+                        status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_name}. Retrying..."
+                        logger.warning(status_msg)
+                        # This is a transient issue, retry
+                        raise RuntimeError(status_msg) # Raise to trigger retry logic
                 else:
-                    logger.warning(f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_name}")
-                    generated_text = f"Response received, but no text content found (Finish Reason: {finish_reason_name})."
-            else:
-                status_msg = f"Response received but no valid content parts found. Finish Reason: {finish_reason_name}"
-                logger.warning(status_msg)
-                generated_text = status_msg
+                    status_msg = f"Response received but no valid content parts found. Finish Reason: {finish_reason_name}. Retrying..."
+                    logger.warning(status_msg)
+                    # This is a transient issue, retry
+                    raise RuntimeError(status_msg) # Raise to trigger retry logic
 
-        except (IndexError, AttributeError, TypeError) as e:
-             logger.error(f"Error accessing response structure: {type(e).__name__}: {e}. Check API response format.", exc_info=True)
-             response_error_msg = f"{ERROR_PREFIX} Error parsing API response: {type(e).__name__}."
-             return response_error_msg, response_error_msg # Return processing error, no specific API block
+            except (IndexError, AttributeError, TypeError) as e:
+                error_msg = f"{ERROR_PREFIX} Error parsing API response: {type(e).__name__}: {e}. Retrying..."
+                logger.error(error_msg, exc_info=True)
+                # This is a transient issue, retry
+                raise RuntimeError(error_msg) # Raise to trigger retry logic
 
-        final_output = generated_text if not response_error_msg else final_output
+        except google_exceptions.GoogleAPIError as e:
+            error_msg = f"{ERROR_PREFIX} Google API Error - Status: {getattr(e, 'code', 'N/A')}, Message: {e}. Retrying..."
+            logger.error(error_msg, exc_info=True)
+            # This is a transient issue, retry
+            pass # Allow loop to continue for retry
 
-    except google_exceptions.GoogleAPIError as e:
-         if google_exceptions:
-             error_msg = f"{ERROR_PREFIX} Google API Error - Status: {getattr(e, 'code', 'N/A')}, Message: {e}"
-             logger.error(error_msg, exc_info=True)
-             final_output = f"{ERROR_PREFIX} A Google API error occurred ({getattr(e, 'code', 'N/A')}). Check console logs."
-         else:
-             # Fallback if specific exception types aren't available
-             error_msg = f"{ERROR_PREFIX} An API error occurred: {e}"
-             logger.error(error_msg, exc_info=True)
-             final_output = f"{ERROR_PREFIX} An API error occurred. Check console logs."
+        except Exception as e:
+            error_details = str(e)
+            if hasattr(e, 'message') and e.message: error_details = e.message
+            elif hasattr(e, 'details') and callable(e.details) and e.details(): error_details = e.details()
+            error_msg = f"{ERROR_PREFIX} Gemini Generation Error ({type(e).__name__}): {error_details}. Retrying..."
+            logger.error(error_msg, exc_info=True)
+            # This is a transient issue, retry
+            pass # Allow loop to continue for retry
 
-    except Exception as e:
-        error_details = str(e)
-        if hasattr(e, 'message') and e.message: error_details = e.message
-        elif hasattr(e, 'details') and callable(e.details) and e.details(): error_details = e.details()
-        error_msg = f"{ERROR_PREFIX} Gemini Generation Error ({type(e).__name__}): {error_details}"
-        logger.error(error_msg, exc_info=True)
-        final_output = error_msg # Always use the formatted error for consistency
+        current_retry += 1
+        if current_retry <= max_retries:
+            logger.info(f"Waiting {retry_delay_seconds} seconds before retry {current_retry}/{max_retries}...")
+            import time
+            time.sleep(retry_delay_seconds)
 
-    # Ensure final_output is always a string before returning
-    if not isinstance(final_output, str):
-        logger.error(f"Final output was not a string ({type(final_output)}), converting. Value: {final_output}")
-        final_output = str(final_output)
-
-    logger.info("Content generation finished.")
-    return final_output, response_error_msg # Return text (or processing error) and potential block message
+    # If loop finishes, all retries exhausted
+    final_error_msg = f"{ERROR_PREFIX} All {max_retries} retries failed. Last error: {error_msg if 'error_msg' in locals() else 'Unknown error.'}"
+    logger.error(final_error_msg)
+    return final_error_msg, final_error_msg # Return final error after all retries
 
 
 # This function is now designed to be called at node initialization (INPUT_TYPES)
@@ -321,9 +324,9 @@ def get_available_models_robust(api_key: Optional[str]) -> List[str]:
         return DEFAULT_MODELS
 
     try:
-        # Configure the genai library with the API key
-        genai.configure(api_key=api_key, transport='rest')
-        logger.debug("genai configured for model listing.")
+        # Configure the genai library with the API key and API version
+        genai.configure(api_key=api_key, transport='rest', http_options={'api_version': 'v1alpha'})
+        logger.debug("genai configured for model listing with v1alpha API.")
 
         # Use genai.list_models() to fetch models
         # Filter for models that support generateContent

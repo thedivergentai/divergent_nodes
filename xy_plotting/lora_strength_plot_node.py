@@ -64,7 +64,7 @@ class LoraStrengthXYPlot:
     individually, saving them to a temporary directory, and then assembling
     the grid from these files. Supports cancellation and optional preview.
     """
-    CATEGORY = "👽 Divergent Nodes/XY Plots"
+    CATEGORY = "Divergent Nodes 👽/XY Plots"
     OUTPUT_NODE = True
 
     @classmethod

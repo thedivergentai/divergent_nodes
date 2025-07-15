@@ -42,7 +42,7 @@ class CLIPTokenCounter:
     RETURN_TYPES: Tuple[str] = ("INT",)
     RETURN_NAMES: Tuple[str] = ("token_count",)
     FUNCTION: str = "count_tokens"
-    CATEGORY: str = "👽 Divergent Nodes/Text Utils" # Updated category slightly
+    CATEGORY: str = "Divergent Nodes 👽/Text Utils" # Updated category slightly
 
     # Removed __init__ as tokenizer loading is now handled per execution
 
