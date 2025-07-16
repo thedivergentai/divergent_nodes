@@ -267,30 +267,10 @@ def generate_content(
                 finish_reason_name = getattr(finish_reason_obj, 'name', str(finish_reason_obj))
 
                 if finish_reason_name == 'SAFETY':
-                    raw_ratings = getattr(candidate, 'safety_ratings', None) # Get raw value, could be None
-                    
-                    # Defensive check: Ensure ratings is always a list before iteration
-                    if raw_ratings is None:
-                        ratings = []
-                        logger.debug("DEBUG: raw_ratings was None, setting 'ratings' to empty list.")
-                    elif not isinstance(raw_ratings, (list, tuple)):
-                        # If it's not None but also not a list/tuple, it's unexpected. Treat as empty.
-                        ratings = []
-                        logger.warning(f"DEBUG: raw_ratings was unexpected type ({type(raw_ratings)}), setting 'ratings' to empty list. Value: {raw_ratings}")
-                    else:
-                        ratings = raw_ratings
-                        logger.debug(f"DEBUG: raw_ratings was iterable, 'ratings' set to raw_ratings. Type: {type(ratings)}")
-
-                    try:
-                        # Filter out None elements from ratings before joining
-                        ratings_str = ', '.join([
-                            f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}"
-                            for r in ratings if r is not None
-                        ])
-                    except (TypeError, AttributeError) as e:
-                        # This catch block is for errors *within* the list comprehension
-                        ratings_str = f"Error parsing safety ratings: {type(e).__name__}: {e}"
-                        logger.error(f"Failed to parse safety ratings: {e}", exc_info=True)
+                    # Defensively get safety ratings. The `prompt_feedback` or `safety_ratings` can be None.
+                    # This ensures `ratings` is always a list, preventing an iteration TypeError.
+                    ratings = getattr(candidate, 'safety_ratings', []) or []
+                    ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings if r])
                     response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
                     logger.error(response_error_msg)
                     # Content block, no retry
