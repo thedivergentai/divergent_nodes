@@ -215,5 +215,3 @@ class SaveImageEnhancedNode:
         # The UI expects a list of results, but the node output is a single string
         # We return the full path of the last saved file as the node output
         return (last_saved_filename,)
-
-# Node mappings are now in __init__.py

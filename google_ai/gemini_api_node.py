@@ -208,16 +208,18 @@ class GeminiNode:
             if extended_thinking and thinking_config:
                 try:
                     client = genai.Client(api_key=api_key)
-                    model_info = client.models.get(model_name)
+                    model_info = client.models.get(model) # Use 'model' parameter directly
                     # Check if 'thinking' is in supported_actions or if model is known to support it
                     # This is a heuristic; a more robust check might involve specific API capabilities
                     if "thinking" not in model_info.supported_actions and "generateContent" in model_info.supported_actions:
                         # If 'thinking' is not explicitly listed but generateContent is,
                         # it might still work, but we'll warn and disable for safety.
-                        logger.warning(f"Model '{model_name}' does not explicitly list 'thinking' in supported actions. Disabling extended thinking for this request.")
+                        logger.warning("Model '{}' does not explicitly list 'thinking' in supported actions. Disabling extended thinking for this request.".format(str(model)))
                         thinking_config = None
                 except Exception as e:
-                    logger.warning(f"Could not verify thinking support for model '{model_name}': {e}. Disabling extended thinking for this request.", exc_info=True)
+                    # Ensure model_name is safely converted to string for logging
+                    safe_model_name = str(model) if isinstance(model, str) else "UNKNOWN_MODEL"
+                    logger.warning("Could not verify thinking support for model '{}': {}. Disabling extended thinking for this request.".format(safe_model_name, e), exc_info=True)
                     thinking_config = None
 
             generation_config = prepare_generation_config(
