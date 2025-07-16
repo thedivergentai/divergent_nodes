@@ -262,54 +262,56 @@ def generate_content(
                     # This is a content block, not a transient API error, so no retry
                     return response_error_msg, response_error_msg
 
-                candidate = candidates[0]
-                finish_reason_obj = getattr(candidate, 'finish_reason', None)
-                finish_reason_name = getattr(finish_reason_obj, 'name', str(finish_reason_obj))
+                # Extract the text content from the first candidate, if it exists.
+                # This function is assumed to be defined elsewhere or will be added.
+                # For now, we'll extract it directly here.
+                generated_text = ""
+                if candidates and getattr(candidates[0], 'content', None):
+                    content_parts = getattr(candidates[0].content, 'parts', [])
+                    generated_text = "".join(getattr(part, 'text', '') for part in content_parts if hasattr(part, 'text'))
 
-                if finish_reason_name == 'SAFETY':
-                    # Defensively get safety ratings. The `prompt_feedback` or `safety_ratings` can be None.
-                    # This ensures `ratings` is always a list, preventing an iteration TypeError.
-                    ratings = getattr(candidate, 'safety_ratings', []) or []
-                    ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings if r])
+                # --- Start of Robust Response Parsing ---
+                # The structure of the 'response' can vary, especially if the prompt is
+                # blocked. We must access attributes defensively to prevent intermittent errors.
+                prompt_feedback = getattr(response, 'prompt_feedback', None)
+
+                # Safely get the finish reason, which can be in different parts of the response.
+                finish_reason_str = "UNKNOWN"
+                if prompt_feedback and hasattr(prompt_feedback, 'block_reason') and prompt_feedback.block_reason:
+                    finish_reason_str = getattr(prompt_feedback.block_reason, 'name', 'OTHER')
+                elif candidates and hasattr(candidates[0], 'finish_reason'):
+                    finish_reason_str = getattr(candidates[0].finish_reason, 'name', 'STOP')
+
+                # This is the definitive fix for the 'NoneType' error.
+                # It ensures 'ratings' is always an iterable list, even if the API response lacks it.
+                ratings = (getattr(prompt_feedback, 'safety_ratings', []) if prompt_feedback else []) or []
+                ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings if r])
+                # -- End of Robust Response Parsing --
+
+                if finish_reason_str == 'SAFETY':
                     response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
                     logger.error(response_error_msg)
-                    # Content block, no retry
                     return response_error_msg, response_error_msg
-                elif finish_reason_name == 'RECITATION':
+                elif finish_reason_str == 'RECITATION':
                     response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped for potential recitation."
                     logger.error(response_error_msg)
-                    # Content block, no retry
                     return response_error_msg, response_error_msg
-                elif finish_reason_name == 'MAX_TOKENS':
+                elif finish_reason_str == 'MAX_TOKENS':
                     logger.warning("Generation stopped: Reached max_output_tokens limit.")
-                elif finish_reason_name not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', None]:
-                    logger.warning(f"Generation finished with reason: {finish_reason_name}")
+                elif finish_reason_str not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', 'OTHER', 'UNKNOWN', None]:
+                    logger.warning(f"Generation finished with reason: {finish_reason_str}")
 
-                content = getattr(candidate, 'content', None)
-                if content is None:
-                    status_msg = f"Response received but candidate content is None. Finish Reason: {finish_reason_name}. Retrying..."
-                    logger.warning(status_msg)
-                    raise RuntimeError(status_msg) # Raise to trigger retry logic
-
-                if not getattr(content, 'parts', None):
-                    status_msg = f"Response received but no valid content parts found. Finish Reason: {finish_reason_name}. Retrying..."
-                    logger.warning(status_msg)
-                    raise RuntimeError(status_msg) # Raise to trigger retry logic
-
-                parts_list = getattr(content, 'parts', [])
-                generated_text = "".join(getattr(part, 'text', '') for part in parts_list)
                 if generated_text:
-                    logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_name}")
+                    logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_str}")
                     return generated_text, None # Success, return immediately
                 else:
-                    status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_name}. Retrying..."
+                    status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_str}. Retrying..."
                     logger.warning(status_msg)
                     raise RuntimeError(status_msg) # Raise to trigger retry logic
 
             except (IndexError, AttributeError, TypeError) as e:
                 error_msg = f"{ERROR_PREFIX} Error parsing API response: {type(e).__name__}: {e}. Retrying..."
                 logger.error(error_msg, exc_info=True)
-                # This is a transient issue, retry
                 raise RuntimeError(error_msg) # Raise to trigger retry logic
 
         except google_exceptions.GoogleAPIError as e:
