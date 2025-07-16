@@ -239,54 +239,29 @@ def generate_content(
             # Process Response
             generated_text: str = ""
             try:
-                candidates = getattr(response, 'candidates', None)
-                if not candidates:
-                    block_reason_code = "UNSPECIFIED"
-                    prompt_feedback_msg = "No prompt feedback available."
-                    prompt_feedback = getattr(response, 'prompt_feedback', None)
-                    if prompt_feedback:
-                        if hasattr(prompt_feedback, 'block_reason'):
-                            block_reason_obj = getattr(prompt_feedback, 'block_reason', None)
-                            block_reason_code = getattr(block_reason_obj, 'name', str(block_reason_obj))
-                        if hasattr(prompt_feedback, 'safety_ratings'):
-                            ratings = getattr(prompt_feedback, 'safety_ratings', [])
-                            ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings])
-                            prompt_feedback_msg = f"Prompt Feedback Safety Ratings: [{ratings_str}]"
-                        elif hasattr(prompt_feedback, 'block_reason'):
-                            prompt_feedback_msg = f"Prompt Block Reason: {block_reason_code}"
-                        else:
-                            prompt_feedback_msg = f"Prompt Feedback: {prompt_feedback}"
-
-                    response_error_msg = f"{ERROR_PREFIX} Blocked/Failed: Generation failed. Reason: {block_reason_code}. {prompt_feedback_msg}"
-                    logger.error(response_error_msg)
-                    # This is a content block, not a transient API error, so no retry
-                    return response_error_msg, response_error_msg
-
-                # Extract the text content from the first candidate, if it exists.
-                # This function is assumed to be defined elsewhere or will be added.
-                # For now, we'll extract it directly here.
-                generated_text = ""
-                if candidates and getattr(candidates[0], 'content', None):
-                    content_parts = getattr(candidates[0].content, 'parts', [])
-                    generated_text = "".join(getattr(part, 'text', '') for part in content_parts if hasattr(part, 'text'))
-
-                # --- Start of Robust Response Parsing ---
+                # --- Start of Bulletproof Response Parsing ---
                 # The structure of the 'response' can vary, especially if the prompt is
                 # blocked. We must access attributes defensively to prevent intermittent errors.
                 prompt_feedback = getattr(response, 'prompt_feedback', None)
+                candidates = getattr(response, 'candidates', None)
 
-                # Safely get the finish reason, which can be in different parts of the response.
+                # Safely get the finish reason from either a block or a successful response.
                 finish_reason_str = "UNKNOWN"
                 if prompt_feedback and hasattr(prompt_feedback, 'block_reason') and prompt_feedback.block_reason:
                     finish_reason_str = getattr(prompt_feedback.block_reason, 'name', 'OTHER')
-                elif candidates and hasattr(candidates[0], 'finish_reason'):
+                elif candidates and len(candidates) > 0 and hasattr(candidates[0], 'finish_reason'):
                     finish_reason_str = getattr(candidates[0].finish_reason, 'name', 'STOP')
 
-                # This is the definitive fix for the 'NoneType' error.
-                # It ensures 'ratings' is always an iterable list, even if the API response lacks it.
+                # This is the definitive fix. It ensures 'ratings' is ALWAYS a list.
                 ratings = (getattr(prompt_feedback, 'safety_ratings', []) if prompt_feedback else []) or []
                 ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings if r])
-                # -- End of Robust Response Parsing --
+                # --- End of Bulletproof Response Parsing ---
+
+                # Extract the text content from the first candidate, if it exists.
+                generated_text = ""
+                if candidates and len(candidates) > 0 and getattr(candidates[0], 'content', None):
+                    content_parts = getattr(candidates[0].content, 'parts', [])
+                    generated_text = "".join(getattr(part, 'text', '') for part in content_parts if hasattr(part, 'text'))
 
                 if finish_reason_str == 'SAFETY':
                     response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
