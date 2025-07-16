@@ -155,7 +155,7 @@ class GeminiNode:
                  "api_key_override": ("STRING", {"multiline": False, "default": "", "tooltip": "Optional: Override API key for this node run. Takes precedence over .env/config.json."}),
                  "max_retries": ("INT", {"default": 3, "min": 0, "max": 10, "step": 1, "tooltip": "Maximum number of retries for transient API errors."}),
                  "retry_delay_seconds": ("INT", {"default": 5, "min": 1, "max": 60, "step": 1, "tooltip": "Delay in seconds between retries."}),
-                 "include_model_thoughts": ("BOOLEAN", {"default": False, "tooltip": "If true, the model's internal thoughts may be included in the response if supported."}),
+                 "extended_thinking": ("BOOLEAN", {"default": True, "tooltip": "If true, the model may use extended thinking (internal reasoning) if supported."}),
                  "thinking_token_budget": ("INT", {"default": -1, "min": -1, "max": 8192, "step": 1, "tooltip": "Token budget for model's thinking process. -1 for automatic, 0 to disable."}),
             }
         }
@@ -177,8 +177,8 @@ class GeminiNode:
         api_key_override: str = "",
         max_retries: int = 3,
         retry_delay_seconds: int = 5,
-        include_model_thoughts: bool = False, # New parameter
-        thinking_token_budget: int = -1, # New parameter
+        extended_thinking: bool = True, # Renamed parameter, default True
+        thinking_token_budget: int = -1,
     ) -> Tuple[str]:
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
@@ -198,17 +198,31 @@ class GeminiNode:
             safety_settings = prepare_safety_settings(
                 safety_harassment, safety_hate_speech, safety_sexually_explicit, safety_dangerous_content
             )
-            generation_config = prepare_generation_config(
-                temperature, top_p, top_k, max_output_tokens
-            )
+
             # Prepare thinking config
             thinking_config = prepare_thinking_config(
-                include_model_thoughts, thinking_token_budget
+                extended_thinking, thinking_token_budget
             )
-            # Add thinking_config to generation_config if it's not None
-            if thinking_config:
-                generation_config["thinkingConfig"] = thinking_config
 
+            # Check if model supports thinking features if extended_thinking is True
+            if extended_thinking and thinking_config:
+                try:
+                    client = genai.Client(api_key=api_key)
+                    model_info = client.models.get(model_name)
+                    # Check if 'thinking' is in supported_actions or if model is known to support it
+                    # This is a heuristic; a more robust check might involve specific API capabilities
+                    if "thinking" not in model_info.supported_actions and "generateContent" in model_info.supported_actions:
+                        # If 'thinking' is not explicitly listed but generateContent is,
+                        # it might still work, but we'll warn and disable for safety.
+                        logger.warning(f"Model '{model_name}' does not explicitly list 'thinking' in supported actions. Disabling extended thinking for this request.")
+                        thinking_config = None
+                except Exception as e:
+                    logger.warning(f"Could not verify thinking support for model '{model_name}': {e}. Disabling extended thinking for this request.", exc_info=True)
+                    thinking_config = None
+
+            generation_config = prepare_generation_config(
+                temperature, top_p, top_k, max_output_tokens, thinking_config # Pass thinking_config here
+            )
 
             # Ensure prompt is UTF-8 friendly
             safe_prompt = ensure_utf8_friendly(prompt)
@@ -262,6 +276,7 @@ class GeminiNode:
                 contents=content_parts,
                 generation_config=generation_config,
                 safety_settings=safety_settings,
+                thinking_config=thinking_config, # Pass thinking_config here
                 max_retries=max_retries,
                 retry_delay_seconds=retry_delay_seconds
             )
