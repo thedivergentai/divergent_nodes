@@ -31,7 +31,7 @@ from ..shared_utils.image_conversion import tensor_to_pil
 # Import genai and types for direct API interaction
 from google import genai
 from google.genai import types
-from google.generativeai.client import GenerativeModel # For dynamic model listing
+from google.generativeai import GenerativeModel # Corrected import for GenerativeModel
 from google.generativeai.client import Client # For dynamic model listing
 
 # Setup logger for this module
