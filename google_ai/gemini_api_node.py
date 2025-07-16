@@ -5,30 +5,34 @@ Requires a GEMINI_API_KEY environment variable.
 """
 import logging
 import torch
-import io # Import io for BytesIO
-from typing import Optional, Dict, Tuple, Any
-from PIL import Image # Import Image for tensor_to_pil
+import io
+import time # Import time for caching
+from typing import Optional, Dict, Tuple, Any, List
+from PIL import Image
 
 # Import necessary functions and constants from the new utils module
 from .gemini_utils import (
     configure_api_key,
     prepare_safety_settings,
     prepare_generation_config,
-    prepare_content_parts, # Keep prepare_content_parts for initial text handling
-    generate_content, # Import the updated generate_content
+    prepare_content_parts,
+    generate_content,
+    prepare_thinking_config, # New import for thinking config
     SAFETY_SETTINGS_MAP,
     SAFETY_THRESHOLD_TO_NAME,
     ERROR_PREFIX,
-    google_exceptions # Import for exception handling
+    google_exceptions
 )
 
 # Import shared utilities
 from ..shared_utils.text_encoding_utils import ensure_utf8_friendly
-from ..shared_utils.image_conversion import tensor_to_pil # Import tensor_to_pil
+from ..shared_utils.image_conversion import tensor_to_pil
 
 # Import genai and types for direct API interaction
 from google import genai
 from google.genai import types
+from google.generativeai.client import GenerativeModel # For dynamic model listing
+from google.generativeai.client import Client # For dynamic model listing
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -67,9 +71,43 @@ class GeminiNode:
     FUNCTION: str = "generate"
     CATEGORY: str = "Divergent Nodes 👽/Gemini"
 
+    _model_cache: List[str] = []
+    _last_cache_update: float = 0
+    _CACHE_LIFETIME_SECONDS: int = 3600 # Cache models for 1 hour
+
     def __init__(self):
         """Initializes the Gemini node instance. No API calls are made here."""
         logger.debug("GeminiNode instance created.")
+
+    @classmethod
+    def _get_cached_models(cls, api_key: str) -> List[str]:
+        """
+        Fetches and caches available Gemini models.
+        Models are cached for _CACHE_LIFETIME_SECONDS to avoid excessive API calls.
+        """
+        current_time = time.time()
+        if not cls._model_cache or (current_time - cls._last_cache_update > cls._CACHE_LIFETIME_SECONDS):
+            logger.info("Refreshing Gemini model list cache...")
+            try:
+                client = Client(api_key=api_key)
+                # Filter for models that support generateContent (text and multimodal)
+                # and exclude tuned models for simplicity in this list
+                models = [
+                    m.name for m in client.models.list()
+                    if "generateContent" in m.supported_actions and not m.name.startswith("tunedModels/")
+                ]
+                # Sort models alphabetically for consistent display
+                models.sort()
+                cls._model_cache = models
+                cls._last_cache_update = current_time
+                logger.info(f"Refreshed model list. Found {len(models)} models.")
+            except Exception as e:
+                logger.error(f"Failed to fetch dynamic model list: {e}", exc_info=True)
+                # Fallback to hardcoded models if API call fails
+                if not cls._model_cache: # Only use hardcoded if cache is empty
+                    cls._model_cache = cls.AVAILABLE_MODELS
+                    logger.warning("Using hardcoded model list due to API error.")
+        return cls._model_cache
 
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Dict[str, Any]]:
@@ -83,11 +121,24 @@ class GeminiNode:
         # Set a default model from the static list
         default_model = "gemini-1.5-flash" # A good general-purpose default
 
+        # Attempt to get cached models. This will trigger an API call if cache is stale/empty.
+        # We pass a dummy API key here as INPUT_TYPES is static and cannot access instance variables.
+        # The actual API key will be used during the 'generate' method.
+        # This is a limitation of ComfyUI's static INPUT_TYPES.
+        # The user's actual API key will be used during the 'generate' method.
+        # For now, we'll use a placeholder or rely on the configure_api_key() in _get_cached_models
+        # to attempt to load from .env/config.json.
+        # If that fails, it will fall back to AVAILABLE_MODELS.
+        current_models = cls._get_cached_models(configure_api_key()) # Attempt to get models using configured API key
+
+        # Combine hardcoded and dynamically fetched models, ensuring uniqueness and order
+        all_models = sorted(list(set(cls.AVAILABLE_MODELS + current_models)))
+
         logger.debug(f"Setting up INPUT_TYPES. Default model: '{default_model}'. Default safety: '{default_safety}'.")
 
         return {
             "required": {
-                "model": (cls.AVAILABLE_MODELS, {"default": default_model, "tooltip": "Select the Gemini model to use."}),
+                "model": (all_models, {"default": default_model, "tooltip": "Select the Gemini model to use."}),
                 "prompt": ("STRING", {"multiline": True, "default": "Describe the image.", "tooltip": "The text prompt for generation."}),
                 "temperature": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "Controls randomness. Higher values (e.g., 1.0) are more creative, lower values (e.g., 0.2) are more deterministic."}),
                 "top_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Nucleus sampling probability threshold (e.g., 0.95). 1.0 disables."}),
@@ -103,6 +154,8 @@ class GeminiNode:
                  "api_key_override": ("STRING", {"multiline": False, "default": "", "tooltip": "Optional: Override API key for this node run. Takes precedence over .env/config.json."}),
                  "max_retries": ("INT", {"default": 3, "min": 0, "max": 10, "step": 1, "tooltip": "Maximum number of retries for transient API errors."}),
                  "retry_delay_seconds": ("INT", {"default": 5, "min": 1, "max": 60, "step": 1, "tooltip": "Delay in seconds between retries."}),
+                 "include_model_thoughts": ("BOOLEAN", {"default": False, "tooltip": "If true, the model's internal thoughts may be included in the response if supported."}),
+                 "thinking_token_budget": ("INT", {"default": -1, "min": -1, "max": 8192, "step": 1, "tooltip": "Token budget for model's thinking process. -1 for automatic, 0 to disable."}),
             }
         }
 
@@ -123,6 +176,8 @@ class GeminiNode:
         api_key_override: str = "",
         max_retries: int = 3,
         retry_delay_seconds: int = 5,
+        include_model_thoughts: bool = False, # New parameter
+        thinking_token_budget: int = -1, # New parameter
     ) -> Tuple[str]:
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
@@ -145,6 +200,14 @@ class GeminiNode:
             generation_config = prepare_generation_config(
                 temperature, top_p, top_k, max_output_tokens
             )
+            # Prepare thinking config
+            thinking_config = prepare_thinking_config(
+                include_model_thoughts, thinking_token_budget
+            )
+            # Add thinking_config to generation_config if it's not None
+            if thinking_config:
+                generation_config["thinkingConfig"] = thinking_config
+
 
             # Ensure prompt is UTF-8 friendly
             safe_prompt = ensure_utf8_friendly(prompt)

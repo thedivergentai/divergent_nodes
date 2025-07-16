@@ -146,8 +146,27 @@ def prepare_generation_config(temperature: float, top_p: float, top_k: int,
         max_output_tokens=max_output_tokens,
     )
 
+def prepare_thinking_config(include_thoughts: bool, thinking_budget: int) -> Optional[types.ThinkingConfig]:
+    """
+    Prepares the thinking configuration dictionary for the Gemini API.
+    Returns None if thinking is not enabled or budget is 0.
+    """
+    if not include_thoughts and thinking_budget == 0:
+        logger.debug("Thinking config disabled.")
+        return None
 
-# prepare_image_part function is removed as per refactoring plan
+    config = {}
+    if include_thoughts:
+        config["include_thoughts"] = True
+    if thinking_budget != -1: # -1 means automatic, so only set if a specific budget is provided
+        config["thinking_budget"] = thinking_budget
+
+    if not config: # If no specific thinking settings are enabled, return None
+        return None
+
+    thinking_config = types.ThinkingConfig(**config)
+    logger.debug(f"Prepared thinking config: {thinking_config}")
+    return thinking_config
 
 def prepare_content_parts(prompt: str) -> Tuple[List[Any], Optional[str]]:
     """
@@ -168,11 +187,12 @@ def prepare_content_parts(prompt: str) -> Tuple[List[Any], Optional[str]]:
 def generate_content(
     api_key: str,
     model_name: str,
-    contents: List[Any], # Accept contents list directly
-    generation_config: Optional[types.GenerateContentConfig] = None, # Expect types.GenerateContentConfig
-    safety_settings: Optional[List[types.SafetySetting]] = None, # Expect List[types.SafetySetting]
-    max_retries: int = 3, # New parameter for retry count
-    retry_delay_seconds: int = 5 # New parameter for delay between retries
+    contents: List[Any],
+    generation_config: Optional[types.GenerateContentConfig] = None,
+    safety_settings: Optional[List[types.SafetySetting]] = None,
+    thinking_config: Optional[types.ThinkingConfig] = None, # New parameter
+    max_retries: int = 3,
+    retry_delay_seconds: int = 5
 ) -> Tuple[str, Optional[str]]:
     """
     Generates content using genai.Client based on a list of content parts,
@@ -204,6 +224,8 @@ def generate_content(
                 full_config.max_output_tokens = generation_config.max_output_tokens
             if safety_settings:
                 full_config.safety_settings = safety_settings
+            if thinking_config: # Add thinking_config if provided
+                full_config.thinking_config = thinking_config
 
             logger.debug(f"Sending request to Gemini API model '{model_name}' (Attempt {current_retry + 1}/{max_retries + 1})...")
             response = client.models.generate_content(
