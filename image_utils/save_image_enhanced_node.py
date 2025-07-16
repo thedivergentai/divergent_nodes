@@ -6,6 +6,7 @@ from PIL.PngImagePlugin import PngInfo
 import json
 import random
 import logging
+import re # Import re for regex operations
 
 # Assuming ComfyUI's folder_paths and cli_args are available in the node environment
 import folder_paths
@@ -35,7 +36,31 @@ def ensure_utf8_friendly(text_input: str) -> str:
         logger.error(f"Error during UTF-8 conversion for input '{text_input[:100]}...': {e}", exc_info=True)
         # Fallback: return original string if conversion fails catastrophically (should be rare with 'replace')
         return text_input
-# --- End of Utility function ---
+
+def sanitize_filename(filename: str, max_length: int = 200) -> str:
+    """
+    Sanitizes a string to be safe for use as a filename.
+    Removes invalid characters and truncates to a maximum length.
+    """
+    if not isinstance(filename, str):
+        logger.warning(f"sanitize_filename received non-string input: {type(filename)}. Converting to string.")
+        filename = str(filename)
+
+    # Replace invalid characters with an underscore
+    invalid_chars = r'[<>:"/\\|?*\x00-\x1f]' # Windows invalid chars + control chars
+    sanitized = re.sub(invalid_chars, '_', filename)
+
+    # Remove leading/trailing spaces and periods (invalid on Windows)
+    sanitized = sanitized.strip(' .')
+
+    # Truncate if too long
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length]
+        logger.warning(f"Filename truncated to {max_length} characters: {sanitized}...")
+
+    return sanitized
+
+# --- End of Utility functions ---
 
 
 class SaveImageEnhancedNode:
@@ -128,7 +153,9 @@ class SaveImageEnhancedNode:
                 # Omit the counter suffix
                 file = f"{filename_part}.png"
 
-            file_path = os.path.join(full_output_folder, file)
+            # Sanitize the filename before creating the full path
+            sanitized_file = sanitize_filename(file)
+            file_path = os.path.join(full_output_folder, sanitized_file)
 
             try:
                 # Save the image
@@ -153,7 +180,9 @@ class SaveImageEnhancedNode:
                     # Omit the counter suffix in caption filename
                     txt_file = f"{filename_part}{caption_file_extension}"
 
-                txt_file_path = os.path.join(full_output_folder, txt_file)
+                # Sanitize the caption filename as well
+                sanitized_txt_file = sanitize_filename(txt_file)
+                txt_file_path = os.path.join(full_output_folder, sanitized_txt_file)
 
                 try:
                     # Save the caption with UTF-8 encoding and sanitization

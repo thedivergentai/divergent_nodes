@@ -135,29 +135,31 @@ def prepare_safety_settings(safety_harassment: str, safety_hate_speech: str,
     return settings
 
 def prepare_generation_config(temperature: float, top_p: float, top_k: int,
-                               max_output_tokens: int) -> types.GenerateContentConfig:
+                               max_output_tokens: int,
+                               thinking_config: Optional[types.ThinkingConfig] = None) -> types.GenerateContentConfig:
     """Builds the generation configuration object using types.GenerateContentConfig."""
     logger.debug("Preparing generation config.")
-    # Create types.GenerateContentConfig object directly
+    # Create types.GenerateContentConfig object directly, including thinking_config
     return types.GenerateContentConfig(
         temperature=temperature,
         top_p=top_p,
         top_k=top_k,
         max_output_tokens=max_output_tokens,
+        thinking_config=thinking_config # Pass thinking_config here
     )
 
-def prepare_thinking_config(include_thoughts: bool, thinking_budget: int) -> Optional[types.ThinkingConfig]:
+def prepare_thinking_config(extended_thinking: bool, thinking_budget: int) -> Optional[types.ThinkingConfig]:
     """
     Prepares the thinking configuration dictionary for the Gemini API.
-    Returns None if thinking is not enabled or budget is 0.
+    Returns None if extended thinking is not enabled or budget is 0.
     """
-    if not include_thoughts and thinking_budget == 0:
+    if not extended_thinking and thinking_budget == 0:
         logger.debug("Thinking config disabled.")
         return None
 
     config = {}
-    if include_thoughts:
-        config["include_thoughts"] = True
+    if extended_thinking:
+        config["include_thoughts"] = True # 'include_thoughts' is the API parameter
     if thinking_budget != -1: # -1 means automatic, so only set if a specific budget is provided
         config["thinking_budget"] = thinking_budget
 
@@ -266,7 +268,8 @@ def generate_content(
 
                 if finish_reason_name == 'SAFETY':
                     raw_ratings = getattr(candidate, 'safety_ratings', None) # Get raw value, could be None
-                    ratings = raw_ratings if raw_ratings is not None else [] # Ensure it's a list, even if raw is None
+                    # Ensure ratings is an iterable, even if raw_ratings is None
+                    ratings = raw_ratings if raw_ratings is not None else []
                     try:
                         # Filter out None elements from ratings before joining
                         ratings_str = ', '.join([
