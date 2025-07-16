@@ -32,7 +32,7 @@ from ..shared_utils.image_conversion import tensor_to_pil
 from google import genai
 from google.genai import types
 from google.generativeai import GenerativeModel # Corrected import for GenerativeModel
-from google.generativeai.client import Client # For dynamic model listing
+# Removed: from google.generativeai.client import Client # This import is causing the error
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -89,7 +89,8 @@ class GeminiNode:
         if not cls._model_cache or (current_time - cls._last_cache_update > cls._CACHE_LIFETIME_SECONDS):
             logger.info("Refreshing Gemini model list cache...")
             try:
-                client = Client(api_key=api_key)
+                # Use genai.Client directly as it's imported from google import genai
+                client = genai.Client(api_key=api_key)
                 # Filter for models that support generateContent (text and multimodal)
                 # and exclude tuned models for simplicity in this list
                 models = [
