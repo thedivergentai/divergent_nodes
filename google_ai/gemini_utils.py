@@ -275,22 +275,13 @@ def generate_content(
                 
                 if hasattr(chunk, 'candidates') and chunk.candidates:
                     for part in chunk.candidates[0].content.parts:
-                        # Only add text parts that are NOT thoughts to the final response
-                        if part.text and not part.thought:
+                        if part.text:
                             # Count tokens of the current chunk's text
                             chunk_token_count = token_counter_model.count_tokens(part.text).total_tokens
                             
                             # Check if adding this chunk exceeds the max_output_tokens
                             if generation_config and (current_response_tokens + chunk_token_count > generation_config.max_output_tokens):
-                                # Truncate the current chunk's text if it exceeds the limit
-                                remaining_tokens = generation_config.max_output_tokens - current_response_tokens
-                                if remaining_tokens > 0:
-                                    # This is a rough truncation. A more precise one would involve re-tokenizing and slicing.
-                                    # For now, we'll just cut off characters.
-                                    truncated_text = part.text[:remaining_tokens]
-                                    full_response_text_list.append(truncated_text)
-                                    current_response_tokens += remaining_tokens
-                                logger.warning(f"Max output tokens ({generation_config.max_output_tokens}) reached. Truncating response.")
+                                logger.warning(f"Max output tokens ({generation_config.max_output_tokens}) reached. Stopping stream.")
                                 break # Stop processing further chunks
                             else:
                                 full_response_text_list.append(part.text)
@@ -312,10 +303,9 @@ def generate_content(
             if final_response_object and hasattr(final_response_object, 'usage_metadata'):
                 usage_metadata = final_response_object.usage_metadata
                 prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
-                # Use the client-side calculated response_tokens for accuracy based on truncation
-                # response_tokens = getattr(usage_metadata, 'response_token_count', 0) # This would be the API's count before truncation
+                response_tokens = getattr(usage_metadata, 'response_token_count', 0) # Use API's response_token_count
                 thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0)
-                logger.info(f"Final Token Usage: Prompt={prompt_tokens}, Client-Response={current_response_tokens}, API-Thoughts={thoughts_tokens}")
+                logger.info(f"Final Token Usage: Prompt={prompt_tokens}, API-Response={response_tokens}, API-Thoughts={thoughts_tokens}")
             else:
                 logger.warning("Could not retrieve usage_metadata from the streamed response. Final response object might be incomplete or missing metadata.")
                 # Fallback: estimate response tokens from generated_text if metadata is missing
@@ -356,7 +346,7 @@ def generate_content(
                 logger.warning(f"Generation finished with reason: {finish_reason_str}")
 
             if generated_text:
-                logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_str}")
+                logger.info(f"Successfully generated text (tokens: {current_response_tokens}, chars: {len(generated_text)}). Finish Reason: {finish_reason_str}")
                 return generated_text, None, prompt_tokens, current_response_tokens, thoughts_tokens # Success, return immediately
             else:
                 status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_str}. Retrying..."
