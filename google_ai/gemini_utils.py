@@ -268,26 +268,33 @@ def generate_content(
             for chunk in response_stream:
                 final_response_object = chunk # Keep track of the last chunk for usage_metadata
                 
-                if chunk.text:
-                    # Count tokens of the current chunk's text
-                    chunk_token_count = token_counter_model.count_tokens(chunk.text).total_tokens
-                    
-                    # Check if adding this chunk exceeds the max_output_tokens
-                    if generation_config and (current_response_tokens + chunk_token_count > generation_config.max_output_tokens):
-                        # Truncate the current chunk's text if it exceeds the limit
-                        remaining_tokens = generation_config.max_output_tokens - current_response_tokens
-                        if remaining_tokens > 0:
-                            # This is a rough truncation. A more precise one would involve re-tokenizing and slicing.
-                            # For now, we'll just cut off characters.
-                            truncated_text = chunk.text[:remaining_tokens]
-                            full_response_text_list.append(truncated_text)
-                            current_response_tokens += remaining_tokens
-                        logger.warning(f"Max output tokens ({generation_config.max_output_tokens}) reached. Truncating response.")
-                        break # Stop processing further chunks
-                    else:
-                        full_response_text_list.append(chunk.text)
-                        current_response_tokens += chunk_token_count
-            
+                if hasattr(chunk, 'candidates') and chunk.candidates:
+                    for part in chunk.candidates[0].content.parts:
+                        if part.text:
+                            # Count tokens of the current chunk's text
+                            chunk_token_count = token_counter_model.count_tokens(part.text).total_tokens
+                            
+                            # Check if adding this chunk exceeds the max_output_tokens
+                            if generation_config and (current_response_tokens + chunk_token_count > generation_config.max_output_tokens):
+                                # Truncate the current chunk's text if it exceeds the limit
+                                remaining_tokens = generation_config.max_output_tokens - current_response_tokens
+                                if remaining_tokens > 0:
+                                    # This is a rough truncation. A more precise one would involve re-tokenizing and slicing.
+                                    # For now, we'll just cut off characters.
+                                    truncated_text = part.text[:remaining_tokens]
+                                    full_response_text_list.append(truncated_text)
+                                    current_response_tokens += remaining_tokens
+                                logger.warning(f"Max output tokens ({generation_config.max_output_tokens}) reached. Truncating response.")
+                                break # Stop processing further chunks
+                            else:
+                                full_response_text_list.append(part.text)
+                                current_response_tokens += chunk_token_count
+                        elif part.thought:
+                            logger.debug(f"Received thought part: {part.text}") # Log thought parts, but don't add to response
+                
+                if generation_config and current_response_tokens >= generation_config.max_output_tokens:
+                    break # Stop processing further chunks if max output tokens reached
+
             generated_text = "".join(full_response_text_list)
 
             # After the stream, extract final token counts from the last chunk's usage_metadata

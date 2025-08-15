@@ -66,8 +66,8 @@ class GeminiNode:
     SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
 
     # Define ComfyUI node attributes
-    RETURN_TYPES: Tuple[str, ...] = ("STRING", "INT", "INT", "INT") # Added INT for token counts
-    RETURN_NAMES: Tuple[str, ...] = ("text", "prompt_tokens", "response_tokens", "thoughts_tokens") # Added names for token counts
+    RETURN_TYPES: Tuple[str, ...] = ("STRING",) # Only text output
+    RETURN_NAMES: Tuple[str, ...] = ("text",) # Only text output
     FUNCTION: str = "generate"
     CATEGORY: str = "Divergent Nodes 👽/Gemini"
 
@@ -181,13 +181,14 @@ class GeminiNode:
         extended_thinking: bool = True, # Renamed parameter, default True
         thinking_token_budget: int = -1,
         cached_context: str = "",
-    ) -> Tuple[str, int, int, int]: # Updated return signature
+    ) -> Tuple[str]: # Only text output
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
-        Returns a tuple: (generated_text, prompt_tokens, response_tokens, thoughts_tokens).
+        Returns a tuple: (generated_text,).
         """
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
+        # Token counts are no longer returned as outputs, but still retrieved internally for logging/debugging if needed
         prompt_tokens = 0
         response_tokens = 0
         thoughts_tokens = 0
@@ -197,7 +198,7 @@ class GeminiNode:
         if not api_key:
             final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Please provide in 'API Key Override' or set in .env/config.json."
             logger.info("Gemini Node: Execution finished due to API key error.")
-            return (final_output, prompt_tokens, response_tokens, thoughts_tokens)
+            return (final_output,) # Only return text output
 
         try:
             # 2. Prepare Configurations using utility functions
@@ -221,7 +222,7 @@ class GeminiNode:
             if extended_thinking and thinking_config.include_thoughts: # Only check if thinking is intended to be enabled
                 try:
                     client = genai.Client(api_key=api_key)
-                    model_info = client.models.get(model) # Use 'model' parameter directly
+                    model_info = client.models.get(model=model) # Use 'model' parameter directly
                     # Check if 'thinking' is in supported_actions or if model is known to support it
                     # This is a heuristic; a more robust check might involve specific API capabilities
                     if "thinking" not in model_info.supported_actions and "generateContent" in model_info.supported_actions:
@@ -320,6 +321,6 @@ class GeminiNode:
 
         logger.info("Gemini Node: Execution finished.")
         # Ensure the final output is UTF-8 friendly before returning
-        return (ensure_utf8_friendly(final_output), prompt_tokens, response_tokens, thoughts_tokens)
+        return (ensure_utf8_friendly(final_output),)
 
 # Note: Mappings are handled in google_ai/__init__.py
