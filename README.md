@@ -111,6 +111,9 @@ Connects to the Google Gemini API to generate text based on a prompt and optiona
 **Outputs:**
 
 *   `text` (STRING): The generated text response from the Gemini API, or an error/status message.
+*   `prompt_tokens` (INT): The number of tokens in the input prompt.
+*   `response_tokens` (INT): The number of tokens in the generated response.
+*   `thoughts_tokens` (INT): The number of tokens used by the model for internal reasoning (if `extended_thinking` is enabled and supported).
 
 **Category:** `Divergent AI 👽/Gemini`
 

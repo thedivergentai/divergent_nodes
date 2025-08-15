@@ -61,13 +61,13 @@ class GeminiNode:
         "gemini-2.0-flash-lite",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite-preview-06-17",
+        "gemini-2.5-flash-lite",
     ]
     SAFETY_OPTIONS = list(SAFETY_SETTINGS_MAP.keys())
 
     # Define ComfyUI node attributes
-    RETURN_TYPES: Tuple[str] = ("STRING",)
-    RETURN_NAMES: Tuple[str] = ("text",)
+    RETURN_TYPES: Tuple[str, ...] = ("STRING", "INT", "INT", "INT") # Added INT for token counts
+    RETURN_NAMES: Tuple[str, ...] = ("text", "prompt_tokens", "response_tokens", "thoughts_tokens") # Added names for token counts
     FUNCTION: str = "generate"
     CATEGORY: str = "Divergent Nodes 👽/Gemini"
 
@@ -179,19 +179,23 @@ class GeminiNode:
         retry_delay_seconds: int = 5,
         extended_thinking: bool = True, # Renamed parameter, default True
         thinking_token_budget: int = -1,
-    ) -> Tuple[str]:
+    ) -> Tuple[str, int, int, int]: # Updated return signature
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
+        Returns a tuple: (generated_text, prompt_tokens, response_tokens, thoughts_tokens).
         """
         logger.info("Gemini Node: Starting execution.")
         final_output = ""
+        prompt_tokens = 0
+        response_tokens = 0
+        thoughts_tokens = 0
 
         # Determine API key to use: override > configure_api_key()
         api_key = api_key_override.strip() if api_key_override.strip() else configure_api_key()
         if not api_key:
             final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Please provide in 'API Key Override' or set in .env/config.json."
             logger.info("Gemini Node: Execution finished due to API key error.")
-            return (final_output,)
+            return (final_output, prompt_tokens, response_tokens, thoughts_tokens)
 
         try:
             # 2. Prepare Configurations using utility functions
@@ -272,7 +276,7 @@ class GeminiNode:
 
             # 5. Call API using the updated generate_content function
             # generate_content now accepts the contents list directly
-            generated_text, response_error_msg = generate_content(
+            generated_text, response_error_msg, prompt_tokens, response_tokens, thoughts_tokens = generate_content(
                 api_key=api_key,
                 model_name=model,
                 contents=content_parts,
@@ -308,6 +312,6 @@ class GeminiNode:
 
         logger.info("Gemini Node: Execution finished.")
         # Ensure the final output is UTF-8 friendly before returning
-        return (ensure_utf8_friendly(final_output),)
+        return (ensure_utf8_friendly(final_output), prompt_tokens, response_tokens, thoughts_tokens)
 
 # Note: Mappings are handled in google_ai/__init__.py

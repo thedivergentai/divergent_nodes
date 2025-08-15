@@ -195,21 +195,24 @@ def generate_content(
     thinking_config: Optional[types.ThinkingConfig] = None, # New parameter
     max_retries: int = 3,
     retry_delay_seconds: int = 5
-) -> Tuple[str, Optional[str]]:
+) -> Tuple[str, Optional[str], int, int, int]: # Added token counts to return signature
     """
     Generates content using genai.Client based on a list of content parts,
     with optional generation config and safety settings, and retry logic.
-    Returns a tuple: (generated_text_or_error, api_block_error_msg).
+    Returns a tuple: (generated_text_or_error, api_block_error_msg, prompt_tokens, response_tokens, thoughts_tokens).
     """
     logger.info(f"Generating content for model: {model_name} with {max_retries} retries.")
     final_output = ""
     response_error_msg: Optional[str] = None
     current_retry = 0
+    prompt_tokens = 0
+    response_tokens = 0
+    thoughts_tokens = 0
 
     if not api_key:
         error_msg = f"{ERROR_PREFIX} API key not provided for generation."
         logger.error(error_msg)
-        return error_msg, error_msg
+        return error_msg, error_msg, prompt_tokens, response_tokens, thoughts_tokens
 
     while current_retry <= max_retries:
         try:
@@ -244,6 +247,14 @@ def generate_content(
                 # blocked. We must access attributes defensively to prevent intermittent errors.
                 prompt_feedback = getattr(response, 'prompt_feedback', None)
                 candidates = getattr(response, 'candidates', None)
+                usage_metadata = getattr(response, 'usage_metadata', None) # Get usage metadata
+
+                # Extract token counts
+                if usage_metadata:
+                    prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
+                    response_tokens = getattr(usage_metadata, 'response_token_count', 0)
+                    thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0)
+                    logger.info(f"Token Usage: Prompt={prompt_tokens}, Response={response_tokens}, Thoughts={thoughts_tokens}")
 
                 # Safely get the finish reason from either a block or a successful response.
                 finish_reason_str = "UNKNOWN"
@@ -269,11 +280,11 @@ def generate_content(
                 if finish_reason_str == 'SAFETY':
                     response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
                     logger.error(response_error_msg)
-                    return response_error_msg, response_error_msg
+                    return response_error_msg, response_error_msg, prompt_tokens, response_tokens, thoughts_tokens
                 elif finish_reason_str == 'RECITATION':
                     response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped for potential recitation."
                     logger.error(response_error_msg)
-                    return response_error_msg, response_error_msg
+                    return response_error_msg, response_error_msg, prompt_tokens, response_tokens, thoughts_tokens
                 elif finish_reason_str == 'MAX_TOKENS':
                     logger.warning("Generation stopped: Reached max_output_tokens limit.")
                 elif finish_reason_str not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', 'OTHER', 'UNKNOWN', None]:
@@ -281,7 +292,7 @@ def generate_content(
 
                 if generated_text:
                     logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_str}")
-                    return generated_text, None # Success, return immediately
+                    return generated_text, None, prompt_tokens, response_tokens, thoughts_tokens # Success, return immediately
                 else:
                     status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_str}. Retrying..."
                     logger.warning(status_msg)
@@ -316,7 +327,7 @@ def generate_content(
     # If loop finishes, all retries exhausted
     final_error_msg = f"{ERROR_PREFIX} All {max_retries} retries failed. Last error: {error_msg if 'error_msg' in locals() else 'Unknown error.'}"
     logger.error(final_error_msg)
-    return final_error_msg, final_error_msg # Return final error after all retries
+    return final_error_msg, final_error_msg, prompt_tokens, response_tokens, thoughts_tokens # Return final error after all retries
 
 
 # This function is now designed to be called at node initialization (INPUT_TYPES)
