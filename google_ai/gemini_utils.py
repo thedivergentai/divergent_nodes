@@ -14,6 +14,7 @@ import torch
 from google import genai
 from google.genai import types
 from google.api_core import exceptions as google_exceptions
+from google.generativeai import GenerativeModel # Added import for GenerativeModel
 
 # Import the new config manager
 from ..shared_utils.config_manager import load_config
@@ -260,7 +261,7 @@ def generate_content(
             # Create a dummy model object to count tokens client-side
             # This is a lightweight way to access the tokenizer for accurate token counting
             # Note: This might not be perfectly aligned with API's internal tokenizer, but it's the best client-side approximation.
-            token_counter_model = genai.GenerativeModel(model_name=model_name)
+            token_counter_model = GenerativeModel(model_name=model_name)
 
             final_response_object = None # To store the last chunk which contains usage_metadata
 
