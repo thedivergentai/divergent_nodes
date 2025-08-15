@@ -71,7 +71,7 @@ class SaveImageEnhancedNode(ComfyNodeABC): # Inherit from ComfyNodeABC
         """
         full_output_folder = self._get_full_output_folder(output_folder)
         os.makedirs(full_output_folder, exist_ok=True)
-        logger.info(f"Saving images to: {full_output_folder}")
+        logger.info(f"📁 [SaveImageEnhanced] Saving images to: {full_output_folder}")
 
         last_filename = ""
         
@@ -83,7 +83,7 @@ class SaveImageEnhancedNode(ComfyNodeABC): # Inherit from ComfyNodeABC
         
         # Ensure images is not empty to avoid index error
         if not images.shape[0] > 0:
-            logger.error("No images provided to Save Image Enhanced node.")
+            logger.error("❌ [SaveImageEnhanced] No images provided to the node. Please connect an image input.")
             return ("ERROR: No images provided.",)
 
         _, base_filename_without_counter, initial_counter, subfolder, _ = folder_paths.get_save_image_path(
@@ -121,7 +121,7 @@ class SaveImageEnhancedNode(ComfyNodeABC): # Inherit from ComfyNodeABC
                 logger.log(SUCCESS_HIGHLIGHT, f"Image saved: {full_image_path}") # Use SUCCESS_HIGHLIGHT
                 last_filename = full_image_path
             except Exception as e:
-                logger.error(f"Error saving image {full_image_path}: {e}", exc_info=True)
+                logger.error(f"❌ [SaveImageEnhanced] Error saving image to '{full_image_path}'. Please check folder permissions or disk space. Error: {e}", exc_info=True)
                 last_filename = f"ERROR: Could not save image {full_image_path} - {e}"
                 continue # Try to save next image
 
@@ -133,9 +133,9 @@ class SaveImageEnhancedNode(ComfyNodeABC): # Inherit from ComfyNodeABC
                     safe_caption = ensure_utf8_friendly(caption)
                     with open(caption_filename, "w", encoding="utf-8") as f:
                         f.write(safe_caption)
-                    logger.info(f"Caption saved: {caption_filename}")
+                    logger.info(f"📄 [SaveImageEnhanced] Caption saved: {caption_filename}")
                 except Exception as e:
-                    logger.error(f"Error saving caption {caption_filename}: {e}", exc_info=True)
+                    logger.error(f"❌ [SaveImageEnhanced] Error saving caption to '{caption_filename}'. Please check folder permissions. Error: {e}", exc_info=True)
 
             # Increment counter only if suffix is added
             if add_counter_suffix:

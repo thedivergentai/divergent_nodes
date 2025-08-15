@@ -83,7 +83,7 @@ class GeminiNode:
         """
         current_time = time.time()
         if not cls._model_cache or (current_time - cls._last_cache_update > cls._CACHE_LIFETIME_SECONDS):
-            logger.info("Refreshing Gemini model list cache...")
+            logger.info("🔄 [GeminiNode] Refreshing Gemini model list cache...")
             try:
                 # Use genai.Client directly as it's imported from google import genai
                 client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
@@ -99,11 +99,11 @@ class GeminiNode:
                 cls._last_cache_update = current_time
                 logger.info(f"Refreshed model list. Found {len(models)} models.")
             except Exception as e:
-                logger.error(f"Failed to fetch dynamic model list: {e}", exc_info=True)
+                logger.error(f"❌ [GeminiNode] Failed to fetch dynamic model list. This might be due to an invalid API key or network issues. Error: {e}", exc_info=True)
                 # Fallback to hardcoded models if API call fails
                 if not cls._model_cache: # Only use hardcoded if cache is empty
                     cls._model_cache = cls.AVAILABLE_MODELS
-                    logger.warning("Using hardcoded model list due to API error.")
+                    logger.warning("⚠️ [GeminiNode] Using hardcoded model list due to API error. Dynamic model fetching failed.")
         return cls._model_cache
 
     @classmethod
@@ -182,7 +182,7 @@ class GeminiNode:
         Executes the Gemini API call for text generation by orchestrating helper methods.
         Returns a tuple: (generated_text,).
         """
-        logger.info("Gemini Node: Starting execution.")
+        logger.info("🚀 [GeminiNode] Starting execution.")
         final_output = ""
         # Token counts are no longer returned as outputs, but still retrieved internally for logging/debugging if needed
         prompt_tokens = 0
@@ -193,7 +193,7 @@ class GeminiNode:
         api_key = api_key_override.strip() if api_key_override.strip() else configure_api_key()
         if not api_key:
             final_output = f"{ERROR_PREFIX} GEMINI_API_KEY not found. Please provide in 'API Key Override' or set in .env/config.json."
-            logger.info("Gemini Node: Execution finished due to API key error.")
+            logger.error("❌ [GeminiNode] Execution finished due to missing API key. Please provide your Gemini API key.")
             return (final_output,) # Only return text output
 
         try:
@@ -209,7 +209,7 @@ class GeminiNode:
 
             # Adjust max_output_tokens if extended thinking is enabled and a specific budget is set
             # This adjustment is only for the API's max_output_tokens, not for client-side filtering of thoughts.
-            adjusted_max_output_tokens = max_output_tokens
+            adjusted_max_output_tokens = max(1, max_output_tokens - thinking_token_budget)
             if extended_thinking and thinking_token_budget != -1:
                 adjusted_max_output_tokens = max(1, max_output_tokens - thinking_token_budget)
                 logger.info(f"Adjusting max_output_tokens from {max_output_tokens} to {adjusted_max_output_tokens} (after reserving {thinking_token_budget} for thoughts).")
@@ -262,7 +262,7 @@ class GeminiNode:
                     raise RuntimeError(error_msg) # Re-raise the error
 
             elif image_optional is not None and not supports_vision:
-                 logger.warning(f"Image input provided but model '{model}' may not support vision. Proceeding with text only.")
+                 logger.warning(f"⚠️ [GeminiNode] Image input provided but model '{model}' may not support vision. Proceeding with text only.")
 
 
             # 5. Call API using the updated generate_content function
@@ -284,8 +284,8 @@ class GeminiNode:
         # Handle potential Google API errors
         except google_exceptions.GoogleAPIError as e:
             error_msg = f"{ERROR_PREFIX} Google API Error - Status: {getattr(e, 'code', 'N/A')}, Message: {e}"
-            logger.error(error_msg, exc_info=True)
-            final_output = f"{ERROR_PREFIX} A Google API error occurred ({getattr(e, 'code', 'N/A')}). Check console logs."
+            logger.error(f"❌ [GeminiNode] A Google API error occurred. Please check your API key, model name, or network connection. Details: {e}", exc_info=True)
+            final_output = f"{ERROR_PREFIX} A Google API error occurred ({getattr(e, 'code', 'N/A')}). Check console logs for details."
 
         # Catch broader errors during the overall process
         except Exception as e:
@@ -293,16 +293,16 @@ class GeminiNode:
             if hasattr(e, 'message') and e.message: error_details = e.message
             elif hasattr(e, 'details') and callable(e.details) and e.details(): error_details = e.details()
             error_msg = f"{ERROR_PREFIX} Gemini Node Error ({type(e).__name__}): {error_details}"
-            logger.error(error_msg, exc_info=True)
+            logger.error(f"❌ [GeminiNode] An unexpected error occurred during Gemini API call. Please review your inputs and workflow. Details: {error_details}", exc_info=True)
             # Use the already formatted error if it came from a raised exception, otherwise use the new one
             final_output = error_msg if not final_output.startswith(ERROR_PREFIX) else final_output
 
         # Ensure final_output is always a string before returning
         if not isinstance(final_output, str):
-            logger.error(f"Final output was not a string ({type(final_output)}), converting. Value: {final_output}")
+            logger.error(f"❌ [GeminiNode] Final output was not a string ({type(final_output)}), converting to string. Value: {final_output}")
             final_output = str(final_output)
 
-        logger.info("Gemini Node: Execution finished.")
+        logger.info("✅ [GeminiNode] Execution finished.")
         # Ensure the final output is UTF-8 friendly before returning
         return (ensure_utf8_friendly(final_output),)
 

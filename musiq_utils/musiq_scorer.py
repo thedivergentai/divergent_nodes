@@ -28,18 +28,18 @@ class MusiQScorer:
         Loads a MusiQ model from TensorFlow Hub, using a global cache.
         """
         if model_url in _musiq_model_cache:
-            logger.info(f"{model_type} MusiQ model already loaded from cache: {model_url}")
+            logger.info(f"📦 [MusiQScorer] {model_type} MusiQ model already loaded from cache: {model_url}")
             return _musiq_model_cache[model_url]
 
-        logger.info(f"Downloading and loading {model_type} MusiQ model from {model_url}...")
+        logger.info(f"⬇️ [MusiQScorer] Downloading and loading {model_type} MusiQ model from {model_url}...")
         try:
             # Use tf.compat.v2.saved_model.load with hub.resolve to use the non-deprecated API
             model = tf.compat.v2.saved_model.load(hub.resolve(model_url))
             _musiq_model_cache[model_url] = model
-            logger.info(f"{model_type} MusiQ model loaded successfully from {model_url}.")
+            logger.info(f"✅ [MusiQScorer] {model_type} MusiQ model loaded successfully from {model_url}.")
             return model
         except Exception as e:
-            logger.error(f"Failed to load {model_type} MusiQ model from {model_url}: {e}", exc_info=True)
+            logger.error(f"❌ [MusiQScorer] Failed to load {model_type} MusiQ model from {model_url}. Please check your internet connection or model URL. Error: {e}", exc_info=True)
             return None
 
     def get_scores(self, pil_image: Image.Image, aesthetic_enabled: bool, aesthetic_model_url: str, technical_enabled: bool, technical_model_url: str):
@@ -61,7 +61,7 @@ class MusiQScorer:
             pil_image.save(img_byte_arr, format='JPEG') # Use JPEG for efficiency and common compatibility
             image_bytes = tf.constant(img_byte_arr.getvalue(), dtype=tf.string)
         except Exception as e:
-            logger.error(f"Error converting PIL Image to bytes: {e}", exc_info=True)
+            logger.error(f"❌ [MusiQScorer] Error converting PIL Image to bytes for scoring. Details: {e}", exc_info=True)
             return 0.0, 0.0 # Indicate error
 
         if aesthetic_enabled and aesthetic_model_url:
@@ -70,12 +70,12 @@ class MusiQScorer:
                 try:
                     aesthetic_score_tensor = aesthetic_model.signatures['serving_default'](image_bytes_tensor=image_bytes)['output_0']
                     aesthetic_score = float(aesthetic_score_tensor.numpy())
-                    logger.info(f"Successfully scored aesthetic: {aesthetic_score:.4f}")
+                    logger.info(f"✅ [MusiQScorer] Successfully scored aesthetic: {aesthetic_score:.4f}")
                 except Exception as e:
-                    logger.error(f"Error scoring aesthetic: {e}", exc_info=True)
+                    logger.error(f"❌ [MusiQScorer] Error scoring aesthetic. Details: {e}", exc_info=True)
                     aesthetic_score = 0.0 # Indicate error
             else:
-                logger.warning("Aesthetic model not loaded, skipping aesthetic scoring.")
+                logger.warning("⚠️ [MusiQScorer] Aesthetic model not loaded, skipping aesthetic scoring.")
                 aesthetic_score = 0.0
         
         if technical_enabled and technical_model_url:
@@ -84,12 +84,12 @@ class MusiQScorer:
                 try:
                     technical_score_tensor = technical_model.signatures['serving_default'](image_bytes_tensor=image_bytes)['output_0']
                     technical_score = float(technical_score_tensor.numpy())
-                    logger.info(f"Successfully scored technical: {technical_score:.4f}")
+                    logger.info(f"✅ [MusiQScorer] Successfully scored technical: {technical_score:.4f}")
                 except Exception as e:
-                    logger.error(f"Error scoring technical: {e}", exc_info=True)
+                    logger.error(f"❌ [MusiQScorer] Error scoring technical. Details: {e}", exc_info=True)
                     technical_score = 0.0 # Indicate error
             else:
-                logger.warning("Technical model not loaded, skipping technical scoring.")
+                logger.warning("⚠️ [MusiQScorer] Technical model not loaded, skipping technical scoring.")
                 technical_score = 0.0
 
         return aesthetic_score, technical_score

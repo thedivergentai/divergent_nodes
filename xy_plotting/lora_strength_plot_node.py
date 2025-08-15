@@ -37,7 +37,7 @@ try:
     )
 except ImportError:
     logging.basicConfig(level=logging.INFO)
-    logging.error("Failed to import utility functions from grid_assembly or plot_utils. Node will likely fail.", exc_info=True)
+    logging.error("❌ [XYPlot] Failed to import utility functions from grid_assembly or plot_utils. This node will likely fail. Please ensure all Divergent Nodes files are correctly installed.", exc_info=True)
     # Define dummy functions to prevent NameErrors, though the node will be broken
     def assemble_image_grid(*args: Any, **kwargs: Any) -> torch.Tensor: raise RuntimeError("grid_assembly not found")
     def draw_labels_on_grid(*args: Any, **kwargs: Any) -> torch.Tensor: raise RuntimeError("grid_assembly not found")
@@ -79,12 +79,12 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
         try:
             sampler_list = comfy.samplers.KSampler.SAMPLERS or ["ERROR: No Samplers Found"]
         except Exception as e:
-            logger.error(f"Failed to get sampler list: {e}", exc_info=True)
+            logger.error(f"❌ [XYPlot] Failed to get sampler list. This might affect available sampler options. Details: {e}", exc_info=True)
             sampler_list = ["ERROR: Failed to Load"]
         try:
             scheduler_list = comfy.samplers.KSampler.SCHEDULERS or ["ERROR: No Schedulers Found"]
         except Exception as e:
-            logger.error(f"Failed to get scheduler list: {e}", exc_info=True)
+            logger.error(f"❌ [XYPlot] Failed to get scheduler list. This might affect available scheduler options. Details: {e}", exc_info=True)
             scheduler_list = ["ERROR: Failed to Load"]
 
         return {
@@ -138,19 +138,19 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
         cond_batch_size = len(positive_cond) if isinstance(positive_cond, list) else 1
         if latent_batch_size != cond_batch_size:
             if latent_batch_size == 1 and cond_batch_size > 1:
-                logger.warning(f"  Latent batch (1) != Cond batch ({cond_batch_size}). Repeating latent sample.")
+                logger.warning(f"⚠️ [XYPlot] Latent batch (1) != Cond batch ({cond_batch_size}). Repeating latent sample to match conditioning batch size.")
                 current_latent['samples'] = latent_samples.repeat(cond_batch_size, 1, 1, 1)
             else:
                 # Force batch size 1 for latent if mismatch occurs and latent isn't already 1
                 # This might be a less common case but handles potential user errors
                 if latent_batch_size > 1:
-                    logger.warning(f"  Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Using only the first latent sample.")
+                    logger.warning(f"⚠️ [XYPlot] Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Using only the first latent sample for individual generation.")
                     current_latent['samples'] = latent_samples[0:1]
                 else:
-                    logger.warning(f"  Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Mismatch might cause errors.")
+                    logger.warning(f"⚠️ [XYPlot] Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). This mismatch might lead to unexpected behavior or errors.")
         # Ensure batch size is 1 for the generation loop
         if current_latent['samples'].shape[0] > 1:
-             logger.debug("Ensuring latent batch size is 1 for individual image generation.")
+             logger.debug("🐛 [XYPlot] Ensuring latent batch size is 1 for individual image generation.")
              current_latent['samples'] = current_latent['samples'][0:1]
 
         return current_latent
@@ -191,11 +191,11 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             RuntimeError: If sampling or latent saving fails.
             ValueError: If sampler output is in an unexpected format.
         """
-        logger.debug(f"  Starting sampling: {sampler_name}/{scheduler}, Steps: {steps}, CFG: {cfg}, Seed: {seed}")
+        logger.debug(f"🐛 [XYPlot] Starting sampling: {sampler_name}/{scheduler}, Steps: {steps}, CFG: {cfg}, Seed: {seed}")
         try:
             # Ensure latent batch size is 1 before preparing noise
             if latent['samples'].shape[0] != 1:
-                 logger.warning(f"Sampler received latent batch size {latent['samples'].shape[0]}, expected 1. Using first sample.")
+                 logger.warning(f"⚠️ [XYPlot] Sampler received latent batch size {latent['samples'].shape[0]}, expected 1. Using only the first sample for this step.")
                  latent['samples'] = latent['samples'][0:1]
 
             noise = comfy.sample.prepare_noise(latent['samples'], seed)
@@ -221,13 +221,13 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             else:
                  raise ValueError(f"Sampler output unexpected format: {type(samples_latent)}. Expected dict with 'samples' or torch.Tensor.")
 
-            logger.debug("  Sampling complete. Saving latent to temporary file...")
+            logger.debug("🐛 [XYPlot] Sampling complete. Saving latent to temporary file...")
             # Save the latent tensor directly to disk (move to CPU to free GPU memory)
             torch.save(result_latent.cpu(), temp_filepath)
-            logger.debug(f"  Saved latent to: {temp_filepath}")
+            logger.debug(f"🐛 [XYPlot] Saved latent to: {temp_filepath}")
             return {'samples': result_latent} # Return as ComfyLatentT dict for consistency
         except Exception as e:
-            logger.error(f"  Error during sampling or saving latent: {e}", exc_info=True)
+            logger.error(f"❌ [XYPlot] Error during sampling or saving latent. This image will be a placeholder. Details: {e}", exc_info=True)
             raise RuntimeError("Sampling or latent saving failed.") from e
 
     def _load_latent_and_decode(self,
@@ -249,7 +249,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
         Raises:
             RuntimeError: If loading or decoding fails.
         """
-        logger.debug(f"  Loading latent from {latent_filepath} and decoding...")
+        logger.debug(f"🐛 [XYPlot] Loading latent from {latent_filepath} and decoding...")
         try:
             latent_to_decode = torch.load(latent_filepath, map_location=device)
             if latent_to_decode.dim() == 3: # If saved without batch dim, add it
@@ -259,12 +259,12 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             latent_to_decode = latent_to_decode.to(vae.device)
 
             img_tensor_chw = vae.decode(latent_to_decode)
-            logger.debug(f"  Decoding complete. Shape: {img_tensor_chw.shape}")
+            logger.debug(f"🐛 [XYPlot] Decoding complete. Shape: {img_tensor_chw.shape}")
             # Remove batch dim and permute: [C, H, W] -> [H, W, C]
             img_tensor_hwc = img_tensor_chw.squeeze(0).permute(1, 2, 0)
             return img_tensor_hwc # Return [H, W, C]
         except Exception as e:
-            logger.error(f"  Error loading or decoding latent from {latent_filepath}: {e}", exc_info=True)
+            logger.error(f"❌ [XYPlot] Error decoding latent from {latent_filepath}. A placeholder image will be used for the grid. Details: {e}", exc_info=True)
             raise RuntimeError(f"Failed to load or decode latent from {latent_filepath}.") from e
 
     def _create_placeholder_latent(self, base_latent: ComfyLatentT, device: torch.device) -> ComfyLatentT:
@@ -285,11 +285,17 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             latent_samples = base_latent['samples']
             # Create a zero tensor with the same shape and dtype as the original latent samples
             placeholder_latent_samples = torch.zeros_like(latent_samples, device=device)
-            logger.info("  Created black placeholder latent due to generation error.")
+            logger.info("ℹ️ [XYPlot] Created black placeholder latent due to generation error.")
             return {'samples': placeholder_latent_samples}
         except Exception as e_placeholder:
-            logger.error(f"  Failed to create placeholder latent: {e_placeholder}", exc_info=True)
+            logger.error(f"❌ [XYPlot] Failed to create placeholder latent. This is a critical error. Details: {e_placeholder}", exc_info=True)
             raise RuntimeError("Latent generation failed and placeholder latent creation also failed.") from e_placeholder
+
+    def _create_placeholder_image(self, H: int, W: int, C: int, device: torch.device) -> TensorHWC:
+        """
+        Creates a black placeholder image tensor with specified dimensions.
+        """
+        return torch.zeros((H, W, C), dtype=torch.float32, device=device)
 
     def _generate_single_latent(
         self,
@@ -336,7 +342,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
         Raises:
             RuntimeError: If latent generation fails and a placeholder cannot be created/saved.
         """
-        logger.info(f"\nGenerating latent {img_index} (LoRA: '{lora_filename_part}', Strength: {strength:.3f})")
+        logger.info(f"✨ [XYPlot] Generating latent {img_index} (LoRA: '{lora_filename_part}', Strength: {strength:.3f})")
         current_model = None
         current_clip = None
         
@@ -347,15 +353,15 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
 
             # 2. Apply LoRA (if pre-loaded)
             if loaded_lora is not None:
-                logger.debug(f"  Applying pre-loaded LoRA: {lora_filename_part} with strength {strength:.3f}")
+                logger.debug(f"🐛 [XYPlot] Applying pre-loaded LoRA: {lora_filename_part} with strength {strength:.3f}")
                 try:
                     current_model, current_clip = comfy.sd.load_lora_for_models(
                         current_model, current_clip, loaded_lora, strength, strength
                     )
                 except Exception as e_apply:
-                    logger.warning(f"  Failed to apply pre-loaded LoRA '{lora_filename_part}'. Skipping. Error: {e_apply}", exc_info=True)
+                    logger.warning(f"⚠️ [XYPlot] Failed to apply pre-loaded LoRA '{lora_filename_part}'. Skipping this LoRA for the current generation. Error: {e_apply}", exc_info=True)
             else:
-                logger.debug(f"  Skipping LoRA application ('{lora_filename_part}' not loaded or is baseline).")
+                logger.debug(f"🐛 [XYPlot] Skipping LoRA application ('{lora_filename_part}' not loaded or is baseline).")
 
             # 3. Prepare Latent (ensure batch size 1)
             current_latent = self._prepare_latent_for_sampling(base_latent, positive)
@@ -370,7 +376,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             return temp_filepath # Return path on success
 
         except Exception as e_generate:
-            logger.error(f"  ERROR generating latent {img_index} (LoRA: '{lora_filename_part}', Str: {strength:.3f}). Error: {e_generate}", exc_info=True)
+            logger.error(f"❌ [XYPlot] ERROR generating latent {img_index} (LoRA: '{lora_filename_part}', Strength: {strength:.3f}). A placeholder will be used. Error: {e_generate}", exc_info=True)
             # Create and save placeholder latent on error
             try:
                 # Ensure placeholder is created on CPU to avoid immediate GPU memory pressure
@@ -378,10 +384,10 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
 
                 placeholder_latent = self._create_placeholder_latent(base_latent, device)
                 torch.save(placeholder_latent['samples'].cpu(), temp_filepath) # Save placeholder to disk
-                logger.info(f"  Saved placeholder latent to: {temp_filepath}")
+                logger.info(f"ℹ️ [XYPlot] Saved placeholder latent to: {temp_filepath}")
                 return temp_filepath # Return path to placeholder
             except Exception as e_placeholder_fallback:
-                logger.critical(f"  Failed to determine placeholder dimensions or create/save placeholder latent: {e_placeholder_fallback}", exc_info=True)
+                logger.critical(f"🚨 [XYPlot] CRITICAL: Failed to determine placeholder dimensions or create/save placeholder latent. Plot generation may be severely affected. Details: {e_placeholder_fallback}", exc_info=True)
                 # Re-raise the original generation error if placeholder fails
                 raise RuntimeError("Failed to generate latent and could not create/save placeholder.") from e_generate
 
@@ -411,9 +417,9 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             img_pil = Image.fromarray(np.clip(img_np * 255.0, 0, 255).astype(np.uint8))
             # Save the image
             img_pil.save(filepath)
-            logger.debug(f"  Saved decoded image tensor to: {filepath}")
+            logger.debug(f"🐛 [XYPlot] Saved decoded image tensor to: {filepath}")
         except Exception as e_save:
-            logger.warning(f"  Failed to save decoded image tensor to {filepath}. Error: {e_save}", exc_info=True)
+            logger.warning(f"⚠️ [XYPlot] Failed to save decoded image tensor to {filepath}. This individual image may be missing. Error: {e_save}", exc_info=True)
             # Raise the error so the main loop knows saving failed if needed
             raise IOError(f"Failed to save image to {filepath}") from e_save
 
@@ -423,7 +429,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
         Images are now decoded one by one from latents.
         Keeping it as a placeholder or for other potential uses.
         """
-        logger.warning("_load_images_from_paths is deprecated in this workflow. It should not be called.")
+        logger.warning("⚠️ [XYPlot] _load_images_from_paths is deprecated in this workflow and should not be called.")
         return [] # Return empty list as it's not used for grid assembly anymore
 
     # --------------------------------------------------------------------------
@@ -495,7 +501,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             ValueError: If plot generation results in zero images.
             RuntimeError: If no latents are generated/saved or no images are decoded.
         """
-        logger.info("--- Starting LoRA vs Strength XY Plot Generation (Disk-Backed Latent Storage) ---")
+        logger.info("🚀 [XYPlot] --- Starting LoRA vs Strength XY Plot Generation (Disk-Backed Latent Storage) ---")
         start_time = datetime.now()
         generation_successful = True
         loaded_loras_cache = {}
@@ -522,19 +528,19 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
 
             # Input Validation: Check latent_image batch size
             if latent_image['samples'].shape[0] > 1:
-                logger.warning(f"Input latent_image has batch size {latent_image['samples'].shape[0]}. Only the first sample will be used for plot generation.")
+                logger.warning(f"⚠️ [XYPlot] Input latent_image has batch size {latent_image['samples'].shape[0]}. Only the first sample will be used for plot generation to ensure consistent grid cells.")
                 # Ensure the base_latent passed to _prepare_latent_for_sampling is also just the first sample
                 latent_image['samples'] = latent_image['samples'][0:1]
 
             # Create temporary directory for latents
             temp_dir = tempfile.mkdtemp(prefix="lora_strength_plot_latents_")
-            logger.info(f"Created temporary directory for latents: {temp_dir}")
+            logger.info(f"📁 [XYPlot] Created temporary directory for latents: {temp_dir}")
 
-            logger.info(f"Preparing to generate {total_images} latents ({num_rows} rows x {num_cols} cols).")
+            logger.info(f"⚙️ [XYPlot] Preparing to generate {total_images} latents ({num_rows} rows x {num_cols} cols).")
             run_folder = setup_output_directory(output_folder_name) if save_individual_images else None
 
             # --- Latent Generation Loop (Saving Latents to Temp Files) ---
-            logger.info("Starting main latent generation loop...")
+            logger.info("🔁 [XYPlot] Starting main latent generation loop...")
             img_idx = 0
             interrupted = False
             for y_idx, strength in enumerate(plot_strengths):
@@ -554,7 +560,8 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                         saved_latent_path = self._generate_single_latent(
                             base_model=model, base_clip=clip,
                             positive=positive, negative=negative, base_latent=latent_image,
-                            seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
+                            seed=seed + img_idx - 1, # Increment seed per image
+                            steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
                             loaded_lora=loaded_lora, strength=strength,
                             img_index=img_idx, lora_filename_part=lora_filename_part,
                             temp_filepath=temp_latent_filepath # Pass filepath for saving
@@ -562,7 +569,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                         generated_latent_paths.append(saved_latent_path)
 
                     except Exception as e_inner:
-                         logger.error(f"Error processing latent {img_idx} for cell ({y_idx},{x_idx}): {e_inner}", exc_info=True)
+                         logger.error(f"❌ [XYPlot] Error processing latent {img_idx} for cell ({y_idx},{x_idx}). A placeholder will be used. Details: {e_inner}", exc_info=True)
                          generation_successful = False
                          # If _generate_single_latent failed to save even a placeholder, this path won't be added.
                          # If it saved a placeholder, the path is added and will be handled later.
@@ -571,10 +578,10 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
 
             # --- Post-Loop: Latent Decoding and Grid Assembly ---
             if not generated_latent_paths:
-                logger.error("No latents were generated or saved successfully.")
+                logger.error("❌ [XYPlot] No latents were generated or saved successfully. Cannot create plot.")
                 raise RuntimeError("Failed to generate any latents for the plot.")
 
-            logger.info(f"Starting VAE decoding and grid assembly from {len(generated_latent_paths)} latents.")
+            logger.info(f"🖼️ [XYPlot] Starting VAE decoding and grid assembly from {len(generated_latent_paths)} latents.")
             decoded_image_tensors_for_grid: List[TensorHWC] = []
 
             # Determine device for VAE decoding (model's device)
@@ -597,15 +604,15 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                             try:
                                 self._save_tensor_to_file(decoded_img_tensor_hwc, perm_filepath)
                             except Exception as e_perm_save:
-                                logger.warning(f"Failed to save individual image to permanent location {perm_filepath}: {e_perm_save}")
+                                logger.warning(f"⚠️ [XYPlot] Failed to save individual image to permanent location {perm_filepath}. This image may be missing from your output folder. Error: {e_perm_save}")
                         else:
-                            logger.warning(f"Could not parse latent filename for individual save: {os.path.basename(latent_path)}")
+                            logger.warning(f"⚠️ [XYPlot] Could not parse latent filename for individual save: {os.path.basename(latent_path)}. Individual image may not be saved correctly.")
 
                     # Update last image for preview (already on CPU)
                     last_decoded_image_tensor_cpu = decoded_img_tensor_hwc.cpu().clone()
 
                 except Exception as e_decode:
-                    logger.error(f"Error decoding latent from {latent_path}: {e_decode}", exc_info=True)
+                    logger.error(f"❌ [XYPlot] Error decoding latent from {latent_path}. A placeholder image will be used for the grid. Details: {e_decode}", exc_info=True)
                     generation_successful = False
                     # Append a placeholder image to maintain grid structure
                     try:
@@ -616,7 +623,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                         placeholder_img = self._create_placeholder_image(H_img, W_img, C_img, torch.device('cpu'))
                         decoded_image_tensors_for_grid.append(placeholder_img)
                     except Exception as e_ph_create:
-                        logger.critical(f"Failed to create placeholder image for grid assembly after decode error: {e_ph_create}", exc_info=True)
+                        logger.critical(f"🚨 [XYPlot] CRITICAL: Failed to create placeholder image for grid assembly after decode error. Plot assembly may fail. Details: {e_ph_create}", exc_info=True)
                         # If placeholder creation fails, the grid assembly might fail or be malformed.
                         # This is a critical state, but we try to continue to provide some output.
                 finally:
@@ -624,13 +631,13 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                     comfy.model_management.soft_empty_cache()
 
             if not decoded_image_tensors_for_grid:
-                 logger.error("No images were successfully decoded for grid assembly.")
+                 logger.error("❌ [XYPlot] No images were successfully decoded for grid assembly. Cannot assemble plot.")
                  raise RuntimeError("Failed to decode any images for the plot.")
 
             # Determine actual grid size based on decoded images
             actual_cols = num_cols
             actual_rows = (len(decoded_image_tensors_for_grid) + actual_cols - 1) // actual_cols
-            logger.info(f"Assembling grid from {len(decoded_image_tensors_for_grid)} decoded images into {actual_rows}x{actual_cols} grid.")
+            logger.info(f"🔲 [XYPlot] Assembling grid from {len(decoded_image_tensors_for_grid)} decoded images into {actual_rows}x{actual_cols} grid.")
 
             # Assemble the grid (images are already on CPU)
             assembled_grid_tensor = assemble_image_grid(
@@ -641,7 +648,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             # --- Label Drawing ---
             final_labeled_tensor = assembled_grid_tensor # Already on CPU, float32
             if draw_labels:
-                logger.info("Drawing labels on grid...")
+                logger.info("✍️ [XYPlot] Drawing labels on grid...")
                 # Adjust labels if interrupted or if some images failed
                 actual_plot_loras = plot_loras[:actual_cols]
                 actual_plot_strengths = plot_strengths[:actual_rows]
@@ -653,12 +660,12 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                         x_axis_label=x_axis_label, y_axis_label=y_axis_label,
                         row_gap=row_gap, col_gap=col_gap
                     )
-                    logger.debug(f"Labels drawn. Final tensor shape: {final_labeled_tensor.shape}, Device: {final_labeled_tensor.device}")
+                    logger.debug(f"🐛 [XYPlot] Labels drawn. Final tensor shape: {final_labeled_tensor.shape}, Device: {final_labeled_tensor.device}")
                 except Exception as e_label:
-                     logger.error(f"Failed to draw labels on grid: {e_label}", exc_info=True)
+                     logger.error(f"❌ [XYPlot] Failed to draw labels on grid. The plot image will be generated without labels. Details: {e_label}", exc_info=True)
                      # Use unlabeled grid if labeling fails
             else:
-                 logger.info("Label drawing skipped.")
+                 logger.info("ℹ️ [XYPlot] Label drawing skipped.")
 
             # --- Final Output Preparation ---
             # Ensure final tensor is float32 and has batch dimension
@@ -668,19 +675,19 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             if display_last_image and last_decoded_image_tensor_cpu is not None:
                 preview_tensor = last_decoded_image_tensor_cpu.float().unsqueeze(0)
             elif display_last_image:
-                 logger.warning("Display last image requested, but no image was successfully generated/kept.")
+                 logger.warning("⚠️ [XYPlot] Display last image requested, but no image was successfully generated or kept. Outputting a blank image.")
                  # Keep default empty preview
 
             end_time = datetime.now()
             duration = end_time - start_time
             logger.log(SUCCESS_HIGHLIGHT, f"--- XY Plot: Generation Finished (Duration: {duration}) ---")
             if not generation_successful:
-                 logger.warning("Plot generation finished, but one or more images may have failed or process was interrupted.")
+                 logger.warning("⚠️ [XYPlot] Plot generation finished, but one or more images may have failed or the process was interrupted. Please check the console for details.")
 
             return (final_output_tensor, preview_tensor)
 
         except Exception as e:
-            logger.critical(f"--- XY Plot: Generation FAILED: {e} ---", exc_info=True)
+            logger.critical(f"🚨 [XYPlot] --- XY Plot: Generation FAILED: {e} --- Please review the error and your workflow settings.", exc_info=True)
             # Return default empty tensors on critical failure
             return (final_output_tensor, preview_tensor)
 
@@ -690,9 +697,9 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             if temp_dir and os.path.exists(temp_dir):
                 try:
                     shutil.rmtree(temp_dir)
-                    logger.info(f"Removed temporary directory for latents: {temp_dir}")
+                    logger.info(f"🗑️ [XYPlot] Removed temporary directory for latents: {temp_dir}")
                 except Exception as e_cleanup:
-                    logger.error(f"Failed to remove temporary directory {temp_dir}: {e_cleanup}", exc_info=True)
+                    logger.error(f"❌ [XYPlot] Failed to remove temporary directory {temp_dir}. Please manually delete it if it persists. Details: {e_cleanup}", exc_info=True)
             comfy.model_management.soft_empty_cache()
 
 # Note: Mappings are handled in xy_plotting/__init__.py

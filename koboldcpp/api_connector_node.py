@@ -30,7 +30,7 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
     ComfyUI node to connect to an ALREADY RUNNING KoboldCpp instance via its API.
 
     This node sends generation requests (text and optional image) to a specified
-    KoboldCpp API endpoint (e.g., http://127.0.0.1:5001). It does NOT launch
+    KoboldCpp API endpoint (e.g., http://127.00.1:5001). It does NOT launch
     or manage the KoboldCpp process itself, relying on the user to have it
     running independently.
     """
@@ -42,7 +42,7 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
 
     def __init__(self):
         """Initializes the API Connector node instance."""
-        logger.debug("KoboldCppApiNode instance created.")
+        logger.debug("⚙️ [KoboldCppApiNode] KoboldCppApiNode instance created.")
         # No instance-specific state needed
 
     @classmethod
@@ -89,19 +89,19 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
     def _check_api_connection(self, api_url: str) -> bool:
         """Performs a quick check to see if the API endpoint is reachable."""
         version_url = f"{api_url}/api/extra/version"
-        logger.debug(f"Checking API connection to: {version_url}")
+        logger.debug(f"🌐 [KoboldCppApiNode] Checking API connection to: {version_url}")
         try:
             # Use a short timeout for the readiness check
             response = requests.get(version_url, timeout=3)
             response.raise_for_status() # Check for HTTP errors (4xx, 5xx)
-            logger.info(f"Successfully connected to KoboldCpp API at {api_url}.")
+            logger.info(f"✅ [KoboldCppApiNode] Successfully connected to KoboldCpp API at {api_url}.")
             return True
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to connect to KoboldCpp API at {api_url}. Is it running? Details: {e}")
+            logger.error(f"❌ [KoboldCppApiNode] Failed to connect to KoboldCpp API at {api_url}. Please ensure KoboldCpp is running and the URL is correct. Details: {e}")
             return False
         except Exception as e:
              # Catch other potential errors during the check
-             logger.error(f"Unexpected error checking API status at {api_url}: {e}", exc_info=True)
+             logger.error(f"❌ [KoboldCppApiNode] An unexpected error occurred while checking API status at {api_url}. Details: {e}", exc_info=True)
              return False
 
     def execute(self,
@@ -137,7 +137,7 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
             Tuple[str]: A tuple containing a single string: the generated text or an error message
                         prefixed with "ERROR:".
         """
-        logger.info("KoboldCpp API Connector Node: Starting execution.")
+        logger.info("🚀 [KoboldCppApiNode] Starting execution.")
         base64_image_string: Optional[str] = None
         generated_text: str = "ERROR: Node execution failed." # Default error message
         error_prefix = "ERROR:"
@@ -146,7 +146,7 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
         api_url_cleaned: str = api_url.strip().rstrip('/')
         if not api_url_cleaned.startswith(("http://", "https://")):
             error_msg = f"{error_prefix} Invalid API URL format: '{api_url}'. Must start with http:// or https://."
-            logger.error(error_msg)
+            logger.error(f"❌ [KoboldCppApiNode] Invalid API URL format. Please ensure it starts with 'http://' or 'https://'. Provided: '{api_url}'")
             return (error_msg,)
 
         # --- 2. Check API Connection ---
@@ -156,19 +156,19 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
 
         # --- 3. Handle Image Input (Convert to Base64) ---
         if image_optional is not None:
-             logger.debug("Processing optional image input.")
+             logger.debug("🖼️ [KoboldCppApiNode] Processing optional image input.")
              try:
                  pil_image = tensor_to_pil(image_optional) # Use shared util
                  if pil_image:
                      base64_image_string = pil_to_base64(pil_image, format="jpeg") # Use shared util
                      if not base64_image_string:
-                          logger.error("Failed to convert input image tensor to Base64 string.")
+                          logger.error("❌ [KoboldCppApiNode] Failed to convert input image tensor to Base64 string. Please check the image format.")
                           return (f"{error_prefix} Failed to convert input image to Base64.",)
-                     logger.debug("Successfully converted image to Base64.")
+                     logger.debug("✅ [KoboldCppApiNode] Successfully converted image to Base64.")
                  else:
-                     logger.warning("Could not convert input tensor to PIL image. Check tensor format/shape.")
+                     logger.warning("⚠️ [KoboldCppApiNode] Could not convert input tensor to PIL image. Check tensor format/shape.")
              except Exception as e:
-                  logger.error(f"Error during image processing: {e}", exc_info=True)
+                  logger.error(f"❌ [KoboldCppApiNode] Error during image processing for API. Details: {e}", exc_info=True)
                   return (f"{error_prefix} Failed during image processing: {e}",)
 
         # --- 4. Prepare Stop Sequences (Split string into list) ---
@@ -178,9 +178,9 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
              stop_sequence_list = [seq.strip() for seq in re.split(r'[,\n]', stop_sequence) if seq.strip()]
              if not stop_sequence_list:
                  stop_sequence_list = None # Ensure it's None if list becomes empty
-             logger.debug(f"Parsed stop sequences: {stop_sequence_list}")
+             logger.debug(f"🐛 [KoboldCppApiNode] Parsed stop sequences: {stop_sequence_list}")
         else:
-             logger.debug("No stop sequences provided.")
+             logger.debug("🐛 [KoboldCppApiNode] No stop sequences provided.")
 
         # --- 5. Prepare API Request Payload ---
         # Construct the prompt, potentially adding multimodal prefix
@@ -189,10 +189,10 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
             # Common format for multimodal prompts in KoboldCpp API
             # Adjust this format if the target KoboldCpp version uses a different convention
             final_prompt = f"\n(Attached Image)\n\n### Instruction:\n{prompt}\n### Response:\n"
-            logger.debug("Using multimodal prompt format.")
+            logger.debug("🐛 [KoboldCppApiNode] Using multimodal prompt format.")
         else:
             final_prompt = prompt
-            logger.debug("Using standard text prompt format.")
+            logger.debug("🐛 [KoboldCppApiNode] Using standard text prompt format.")
 
         payload: Dict[str, Any] = {
             "prompt": final_prompt,
@@ -212,14 +212,14 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
 
         # --- 6. Call KoboldCpp API ---
         generate_url: str = f"{api_url_cleaned}/api/v1/generate" # Standard endpoint
-        logger.info(f"Sending generation request to {generate_url}")
-        logger.debug(f"API Payload: {json.dumps(payload, indent=2)}")
+        logger.info(f"✉️ [KoboldCppApiNode] Sending generation request to {generate_url}")
+        logger.debug(f"🐛 [KoboldCppApiNode] API Payload: {json.dumps(payload, indent=2)}")
         try:
             response = requests.post(generate_url, json=payload, timeout=300) # 5 min timeout
             response.raise_for_status() # Check for 4xx/5xx errors
 
             response_json: Dict[str, Any] = response.json()
-            logger.debug(f"API Response JSON: {json.dumps(response_json, indent=2)}")
+            logger.debug(f"🐛 [KoboldCppApiNode] API Response JSON: {json.dumps(response_json, indent=2)}")
 
             results: Optional[List[Dict[str, Any]]] = response_json.get("results")
             if results and isinstance(results, list) and len(results) > 0:
@@ -230,30 +230,30 @@ class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
                      generated_text = str(generated_text) # Ensure string type
                 else:
                      generated_text = f"{error_prefix} 'text' field not found in API response results."
-                     logger.warning(f"Invalid API response structure ('text' missing): {response_json}")
+                     logger.warning(f"⚠️ [KoboldCppApiNode] Invalid API response structure: 'text' field missing from results. Response: {response_json}")
             else:
                 # Handle cases where 'results' is missing or empty
                 generated_text = f"{error_prefix} 'results' field not found or invalid in API response: {response_json}"
-                logger.warning(f"Invalid API response structure ('results' missing or empty): {response_json}")
+                logger.warning(f"⚠️ [KoboldCppApiNode] Invalid API response structure: 'results' field missing or empty. Response: {response_json}")
 
         except requests.exceptions.Timeout:
             generated_text = f"{error_prefix} API request timed out after 300 seconds to {generate_url}."
-            logger.error(generated_text)
+            logger.error(f"❌ [KoboldCppApiNode] API request timed out. The KoboldCpp server took too long to respond. URL: {generate_url}")
         except requests.exceptions.RequestException as e:
             # Handles ConnectionError, HTTPError, etc.
             generated_text = f"{error_prefix} API request failed: {e}"
-            logger.error(generated_text, exc_info=True)
+            logger.error(f"❌ [KoboldCppApiNode] API request failed. Please check your network connection or KoboldCpp server status. Details: {e}", exc_info=True)
         except json.JSONDecodeError as e:
              generated_text = f"{error_prefix} Failed to parse JSON response from API: {e}"
-             logger.error(generated_text, exc_info=True)
-             logger.debug(f"Raw API response content: {response.text if 'response' in locals() else 'N/A'}")
+             logger.error(f"❌ [KoboldCppApiNode] Failed to parse JSON response from KoboldCpp API. The response might be malformed. Details: {e}", exc_info=True)
+             logger.debug(f"🐛 [KoboldCppApiNode] Raw API response content: {response.text if 'response' in locals() else 'N/A'}")
         except Exception as e:
              # Catch any other unexpected errors
              generated_text = f"{error_prefix} An unexpected error occurred during API call: {e}"
-             logger.error(generated_text, exc_info=True)
+             logger.error(f"❌ [KoboldCppApiNode] An unexpected error occurred during the API call. Details: {e}", exc_info=True)
 
         # --- 7. Return the result ---
-        logger.info("KoboldCpp API Connector Node: Execution finished.")
+        logger.info("✅ [KoboldCppApiNode] Execution finished.")
         return (generated_text,)
 
 # Note: NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS are defined

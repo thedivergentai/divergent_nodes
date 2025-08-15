@@ -59,7 +59,7 @@ class CLIPTokenCounter:
             text is empty, not a string, or if an error occurs during tokenization.
         """
         if not text or not isinstance(text, str):
-            logger.warning("Input text is empty or not a string. Returning token count 0.")
+            logger.warning("⚠️ [TokenCounter] Input text is empty or not a string. Cannot count tokens. Returning 0.")
             return (0,)
 
         try:
@@ -78,12 +78,12 @@ class CLIPTokenCounter:
             # The token count is the sequence length (dimension 1) of the input_ids tensor
             # It includes special tokens (like BOS/EOS) added by the tokenizer.
             token_count: int = inputs['input_ids'].shape[1]
-            logger.info(f"Tokenized text with '{tokenizer_name}'. Token count: {token_count}")
+            logger.info(f"✅ [TokenCounter] Tokenized text with '{tokenizer_name}'. Token count: {token_count}")
             return (token_count,)
 
         except Exception as e:
             # Log the error and return 0
-            logger.error(f"Error loading tokenizer or tokenizing text with '{tokenizer_name}': {e}", exc_info=True)
+            logger.error(f"❌ [TokenCounter] Failed to load tokenizer or tokenize text with '{tokenizer_name}'. Please check the tokenizer name and your internet connection. Error: {e}", exc_info=True)
             return (0,)
 
 # Note: Mappings are handled in clip_utils/__init__.py

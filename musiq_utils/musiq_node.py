@@ -34,7 +34,7 @@ class MusiQNode(ComfyNodeABC): # Inherit from ComfyNodeABC
                 "aesthetic_model": (["AVA"], {"default": "AVA", "tooltip": "The aesthetic model to use (currently only AVA)."}),
                 "technical_model": (["KonIQ-10k", "SPAQ", "PaQ-2-PiQ"], {"default": "KonIQ-10k", "tooltip": "The technical model to use."}),
                 "score_aesthetic": (IO.BOOLEAN, {"default": True, "tooltip": "Enable/disable aesthetic scoring."}), # Use IO.BOOLEAN
-                "score_technical": (IO.BOOLEAN, {"default": False, "tooltip": "Enable/disable technical scoring."}), # Use IO.BOOLEAN
+                "score_technical": (IO.BOOLEAN, {"default": True, "tooltip": "Enable/disable technical scoring."}), # Use IO.BOOLEAN
             }
         }
 
@@ -51,11 +51,11 @@ class MusiQNode(ComfyNodeABC): # Inherit from ComfyNodeABC
         final_average_score_100 = 0
         error_message = ""
 
-        logger.info("MusiQ Node: Starting image scoring.")
+        logger.info("🚀 [MusiQNode] Starting image scoring.")
 
         if not score_aesthetic and not score_technical:
             error_message = "ERROR: At least one scoring option (Aesthetic or Technical) must be enabled."
-            logger.error(error_message)
+            logger.error(f"❌ [MusiQNode] {error_message}")
             return (aesthetic_score, technical_score, final_average_score_10, final_average_score_100, error_message)
 
         try:
@@ -65,8 +65,8 @@ class MusiQNode(ComfyNodeABC): # Inherit from ComfyNodeABC
             aesthetic_model_url = self.model_urls.get(aesthetic_model) if score_aesthetic else None
             technical_model_url = self.model_urls.get(technical_model) if score_technical else None
 
-            logger.debug(f"Aesthetic scoring enabled: {score_aesthetic}, Technical scoring enabled: {score_technical}")
-            logger.debug(f"Aesthetic model URL: {aesthetic_model_url}, Technical model URL: {technical_model_url}")
+            logger.debug(f"🐛 [MusiQNode] Aesthetic scoring enabled: {score_aesthetic}, Technical scoring enabled: {score_technical}")
+            logger.debug(f"🐛 [MusiQNode] Aesthetic model URL: {aesthetic_model_url}, Technical model URL: {technical_model_url}")
 
             aesthetic_score, technical_score = self.musiq_scorer.get_scores(
                 pil_image,
@@ -76,10 +76,10 @@ class MusiQNode(ComfyNodeABC): # Inherit from ComfyNodeABC
 
             if score_aesthetic and aesthetic_score == 0.0:
                 error_message += "Aesthetic scoring failed or model not loaded. "
-                logger.warning("Aesthetic score is 0.0 despite being enabled. Check MusiQScorer logs.")
+                logger.warning("⚠️ [MusiQNode] Aesthetic score is 0.0 despite being enabled. Check MusiQScorer logs for details.")
             if score_technical and technical_score == 0.0:
                 error_message += "Technical scoring failed or model not loaded. "
-                logger.warning("Technical score is 0.0 despite being enabled. Check MusiQScorer logs.")
+                logger.warning("⚠️ [MusiQNode] Technical score is 0.0 despite being enabled. Check MusiQScorer logs for details.")
             
             # Calculate final average score based on enabled options and correct scaling
             average_score_out_of_100 = 0.0
@@ -104,17 +104,17 @@ class MusiQNode(ComfyNodeABC): # Inherit from ComfyNodeABC
             final_average_score_100 = int(round(average_score_out_of_100))
             
             if error_message:
-                logger.error(f"MusiQNode encountered issues: {error_message.strip()}")
+                logger.error(f"❌ [MusiQNode] MusiQNode encountered issues: {error_message.strip()}")
             else:
                 logger.log(SUCCESS_HIGHLIGHT, f"Image scored successfully. Aesthetic: {aesthetic_score:.2f}, Technical: {technical_score:.2f}, Final: {final_average_score_100} (out of 100).")
 
         except Exception as e:
             error_message = f"ERROR: MusiQNode encountered an unexpected error: {e}"
-            logger.error(error_message, exc_info=True)
+            logger.error(f"❌ [MusiQNode] An unexpected error occurred during image scoring. Please check your image input and model settings. Details: {e}", exc_info=True)
             aesthetic_score = 0.0
             technical_score = 0.0
             final_average_score_10 = 0
             final_average_score_100 = 0
 
-        logger.info("MusiQ Node: Execution finished.")
+        logger.info("✅ [MusiQNode] Execution finished.")
         return (aesthetic_score, technical_score, final_average_score_10, final_average_score_100, error_message.strip())
