@@ -33,7 +33,8 @@ class MusiQScorer:
 
         logger.info(f"Downloading and loading {model_type} MusiQ model from {model_url}...")
         try:
-            model = hub.load(model_url)
+            # Use tf.compat.v2.saved_model.load with hub.resolve to use the non-deprecated API
+            model = tf.compat.v2.saved_model.load(hub.resolve(model_url))
             _musiq_model_cache[model_url] = model
             logger.info(f"{model_type} MusiQ model loaded successfully from {model_url}.")
             return model
