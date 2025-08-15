@@ -31,7 +31,7 @@ from ..shared_utils.image_conversion import tensor_to_pil
 # Import genai and types for direct API interaction
 from google import genai
 from google.genai import types
-from google.genai import GenerativeModel, Client
+from google.genai import Client
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class GeminiNode:
             logger.info("Refreshing Gemini model list cache...")
             try:
                 # Use genai.Client directly as it's imported from google import genai
-                client = genai.Client(api_key=api_key)
+                client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
                 # Filter for models that support generateContent (text and multimodal)
                 # and exclude tuned models for simplicity in this list
                 models = [

@@ -14,8 +14,6 @@ import torch
 from google import genai
 from google.genai import types
 from google.api_core import exceptions as google_exceptions
-from google.genai import GenerativeModel
-
 # Import the new config manager
 from ..shared_utils.config_manager import load_config
 from ..shared_utils.image_conversion import tensor_to_pil # Assuming this utility is stable
@@ -246,11 +244,6 @@ def generate_content(
             full_response_text_list = []
             current_response_tokens = 0
             
-            # Create a dummy model object to count tokens client-side
-            # This is a lightweight way to access the tokenizer for accurate token counting
-            # Note: This might not be perfectly aligned with API's internal tokenizer, but it's the best client-side approximation.
-            token_counter_model = GenerativeModel(model_name=model_name)
-
             final_response_object = None # To store the last chunk which contains usage_metadata
 
             for chunk in response_stream:
@@ -259,8 +252,9 @@ def generate_content(
                 if hasattr(chunk, 'candidates') and chunk.candidates:
                     for part in chunk.candidates[0].content.parts:
                         if part.text:
-                            # Count tokens of the current chunk's text
-                            chunk_token_count = token_counter_model.count_tokens(part.text).total_tokens
+                            # Count tokens of the current chunk's text using client.models.count_tokens
+                            # This requires the client object and model name
+                            chunk_token_count = client.models.count_tokens(model=model_name, contents=[part.text]).total_tokens
                             
                             # Check if adding this chunk exceeds the max_output_tokens
                             if generation_config and (current_response_tokens + chunk_token_count > generation_config.max_output_tokens):
@@ -293,7 +287,7 @@ def generate_content(
                 logger.warning("Could not retrieve usage_metadata from the streamed response. Final response object might be incomplete or missing metadata.")
                 # Fallback: estimate response tokens from generated_text if metadata is missing
                 if generated_text:
-                    response_tokens = token_counter_model.count_tokens(generated_text).total_tokens
+                    response_tokens = client.models.count_tokens(model=model_name, contents=[generated_text]).total_tokens
                 logger.info(f"Estimated Token Usage (no metadata): Client-Response={response_tokens}")
 
 
