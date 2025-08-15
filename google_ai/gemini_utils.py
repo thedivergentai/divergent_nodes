@@ -291,6 +291,10 @@ def generate_content(
                                 current_response_tokens += chunk_token_count
                         elif part.thought:
                             logger.debug(f"Received thought part: {part.text}") # Log thought parts, but don't add to response
+                        else:
+                            logger.warning(f"Received part with no text or thought. Type: {type(part)}, Attributes: {dir(part)}")
+                else:
+                    logger.warning(f"Chunk has no candidates or candidates list is empty. Chunk: {chunk}")
                 
                 if generation_config and current_response_tokens >= generation_config.max_output_tokens:
                     break # Stop processing further chunks if max output tokens reached
@@ -298,6 +302,7 @@ def generate_content(
             generated_text = "".join(full_response_text_list)
 
             # After the stream, extract final token counts from the last chunk's usage_metadata
+            logger.debug(f"Final response object before usage_metadata extraction: {final_response_object}")
             if final_response_object and hasattr(final_response_object, 'usage_metadata'):
                 usage_metadata = final_response_object.usage_metadata
                 prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
@@ -306,7 +311,7 @@ def generate_content(
                 thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0)
                 logger.info(f"Final Token Usage: Prompt={prompt_tokens}, Client-Response={current_response_tokens}, API-Thoughts={thoughts_tokens}")
             else:
-                logger.warning("Could not retrieve usage_metadata from the streamed response.")
+                logger.warning("Could not retrieve usage_metadata from the streamed response. Final response object might be incomplete or missing metadata.")
                 # Fallback: estimate response tokens from generated_text if metadata is missing
                 if generated_text:
                     response_tokens = token_counter_model.count_tokens(generated_text).total_tokens

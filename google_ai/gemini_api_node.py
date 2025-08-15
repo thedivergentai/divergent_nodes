@@ -217,22 +217,8 @@ class GeminiNode:
                 adjusted_max_output_tokens = max(1, max_output_tokens - thinking_token_budget)
                 logger.info(f"Adjusting max_output_tokens from {max_output_tokens} to {adjusted_max_output_tokens} (after reserving {thinking_token_budget} for thoughts).")
 
-            # Check if model supports thinking features if extended_thinking is True
-            # If not supported, explicitly set include_thoughts to False within the existing thinking_config
-            if extended_thinking and thinking_config.include_thoughts: # Only check if thinking is intended to be enabled
-                try:
-                    client = genai.Client(api_key=api_key)
-                    model_info = client.models.get(model=model) # Use 'model' parameter directly
-                    # Check if 'thinking' is in supported_actions or if model is known to support it
-                    # This is a heuristic; a more robust check might involve specific API capabilities
-                    if "thinking" not in model_info.supported_actions and "generateContent" in model_info.supported_actions:
-                        logger.warning("Model '{}' does not explicitly list 'thinking' in supported actions. Disabling extended thinking for this request.".format(str(model)))
-                        thinking_config.include_thoughts = False # Modify the existing object
-                except Exception as e:
-                    # Ensure model_name is safely converted to string for logging
-                    safe_model_name = str(model) if isinstance(model, str) else "UNKNOWN_MODEL"
-                    logger.warning("Could not verify thinking support for model '{}': {}. Disabling extended thinking for this request.".format(safe_model_name, e), exc_info=True)
-                    thinking_config.include_thoughts = False # Modify the existing object
+            # Removed: Unreliable check for thinking support.
+            # The prepare_thinking_config function already handles disabling thoughts based on node inputs.
 
             generation_config = prepare_generation_config(
                 temperature, top_p, top_k, adjusted_max_output_tokens, thinking_config # Pass adjusted_max_output_tokens here
