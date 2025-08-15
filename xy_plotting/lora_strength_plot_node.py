@@ -35,9 +35,18 @@ try:
         preload_loras,
         setup_output_directory
     )
+    from .sampling_helpers import (
+        prepare_latent_for_sampling,
+        run_sampling_and_save_latent,
+        load_latent_and_decode,
+        create_placeholder_latent,
+        create_placeholder_image,
+        generate_single_latent
+    )
+    from .image_helpers import save_tensor_to_file
 except ImportError:
     logging.basicConfig(level=logging.INFO)
-    logging.error("❌ [XYPlot] Failed to import utility functions from grid_assembly or plot_utils. This node will likely fail. Please ensure all Divergent Nodes files are correctly installed.", exc_info=True)
+    logging.error("❌ [XYPlot] Failed to import utility functions. This node will likely fail. Please ensure all Divergent Nodes files are correctly installed.", exc_info=True)
     # Define dummy functions to prevent NameErrors, though the node will be broken
     def assemble_image_grid(*args: Any, **kwargs: Any) -> torch.Tensor: raise RuntimeError("grid_assembly not found")
     def draw_labels_on_grid(*args: Any, **kwargs: Any) -> torch.Tensor: raise RuntimeError("grid_assembly not found")
@@ -46,6 +55,13 @@ except ImportError:
     def determine_plot_axes(*args: Any, **kwargs: Any) -> Tuple[List[str], List[float]]: raise RuntimeError("plot_utils not found")
     def preload_loras(*args: Any, **kwargs: Any) -> Dict[str, Any]: raise RuntimeError("plot_utils not found")
     def setup_output_directory(*args: Any, **kwargs: Any) -> Optional[str]: raise RuntimeError("plot_utils not found")
+    def prepare_latent_for_sampling(*args: Any, **kwargs: Any) -> Any: raise RuntimeError("sampling_helpers not found")
+    def run_sampling_and_save_latent(*args: Any, **kwargs: Any) -> Any: raise RuntimeError("sampling_helpers not found")
+    def load_latent_and_decode(*args: Any, **kwargs: Any) -> Any: raise RuntimeError("sampling_helpers not found")
+    def create_placeholder_latent(*args: Any, **kwargs: Any) -> Any: raise RuntimeError("sampling_helpers not found")
+    def create_placeholder_image(*args: Any, **kwargs: Any) -> Any: raise RuntimeError("sampling_helpers not found")
+    def generate_single_latent(*args: Any, **kwargs: Any) -> Any: raise RuntimeError("sampling_helpers not found")
+    def save_tensor_to_file(*args: Any, **kwargs: Any) -> Any: raise RuntimeError("image_helpers not found")
 
 
 # Setup logger
@@ -122,319 +138,6 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
     RETURN_NAMES: Tuple[str] = ("xy_plot_image", "last_generated_image")
     FUNCTION: str = "generate_plot" # Use type hint for FUNCTION
 
-    # --------------------------------------------------------------------------
-    # Core Image Generation Logic (Internal Helpers)
-    # --------------------------------------------------------------------------
-    def _prepare_latent_for_sampling(self,
-                                     base_latent: ComfyLatentT,
-                                     positive_cond: ComfyConditioningT
-                                     ) -> ComfyLatentT:
-        """Prepares the latent dictionary for sampling, handling batch size."""
-        current_latent = base_latent.copy()
-        if not isinstance(current_latent, dict) or "samples" not in current_latent:
-            raise TypeError(f"Invalid latent_image format: {type(base_latent)}. Expected dict with 'samples'.")
-        latent_samples = current_latent['samples']
-        latent_batch_size = latent_samples.shape[0]
-        cond_batch_size = len(positive_cond) if isinstance(positive_cond, list) else 1
-        if latent_batch_size != cond_batch_size:
-            if latent_batch_size == 1 and cond_batch_size > 1:
-                logger.warning(f"⚠️ [XYPlot] Latent batch (1) != Cond batch ({cond_batch_size}). Repeating latent sample to match conditioning batch size.")
-                current_latent['samples'] = latent_samples.repeat(cond_batch_size, 1, 1, 1)
-            else:
-                # Force batch size 1 for latent if mismatch occurs and latent isn't already 1
-                # This might be a less common case but handles potential user errors
-                if latent_batch_size > 1:
-                    logger.warning(f"⚠️ [XYPlot] Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). Using only the first latent sample for individual generation.")
-                    current_latent['samples'] = latent_samples[0:1]
-                else:
-                    logger.warning(f"⚠️ [XYPlot] Latent batch ({latent_batch_size}) != Cond batch ({cond_batch_size}). This mismatch might lead to unexpected behavior or errors.")
-        # Ensure batch size is 1 for the generation loop
-        if current_latent['samples'].shape[0] > 1:
-             logger.debug("🐛 [XYPlot] Ensuring latent batch size is 1 for individual image generation.")
-             current_latent['samples'] = current_latent['samples'][0:1]
-
-        return current_latent
-
-    def _run_sampling_and_save_latent(self,
-                                      model: ComfyModelObjectT,
-                                      clip: ComfyCLIPObjectT,
-                                      positive: ComfyConditioningT,
-                                      negative: ComfyConditioningT,
-                                      latent: ComfyLatentT,
-                                      seed: int,
-                                      steps: int,
-                                      cfg: float,
-                                      sampler_name: str,
-                                      scheduler: str,
-                                      temp_filepath: str
-                                      ) -> ComfyLatentT:
-        """
-        Performs sampling and saves the resulting latent to a temporary file.
-        
-        Args:
-            model (ComfyModelObjectT): The ComfyUI model object.
-            clip (ComfyCLIPObjectT): The ComfyUI CLIP object.
-            positive (ComfyConditioningT): Positive conditioning.
-            negative (ComfyConditioningT): Negative conditioning.
-            latent (ComfyLatentT): The input latent image dictionary.
-            seed (int): The seed for random number generation.
-            steps (int): Number of sampling steps.
-            cfg (float): Classifier-free guidance scale.
-            sampler_name (str): Name of the sampler to use.
-            scheduler (str): Name of the scheduler to use.
-            temp_filepath (str): Full path to save the latent tensor.
-
-        Returns:
-            ComfyLatentT: The generated latent dictionary.
-
-        Raises:
-            RuntimeError: If sampling or latent saving fails.
-            ValueError: If sampler output is in an unexpected format.
-        """
-        logger.debug(f"🐛 [XYPlot] Starting sampling: {sampler_name}/{scheduler}, Steps: {steps}, CFG: {cfg}, Seed: {seed}")
-        try:
-            # Ensure latent batch size is 1 before preparing noise
-            if latent['samples'].shape[0] != 1:
-                 logger.warning(f"⚠️ [XYPlot] Sampler received latent batch size {latent['samples'].shape[0]}, expected 1. Using only the first sample for this step.")
-                 latent['samples'] = latent['samples'][0:1]
-
-            noise = comfy.sample.prepare_noise(latent['samples'], seed)
-
-            samples_latent = comfy.sample.sample(
-                model=model,
-                noise=noise,
-                seed=seed,
-                steps=steps,
-                cfg=cfg,
-                sampler_name=sampler_name,
-                scheduler=scheduler,
-                positive=positive,
-                negative=negative,
-                latent_image=latent['samples'], # Pass the tensor [1, C, H_lat, W_lat]
-                denoise=1.0
-            )
-
-            if isinstance(samples_latent, dict) and "samples" in samples_latent:
-                result_latent = samples_latent["samples"]
-            elif isinstance(samples_latent, torch.Tensor):
-                result_latent = samples_latent
-            else:
-                 raise ValueError(f"Sampler output unexpected format: {type(samples_latent)}. Expected dict with 'samples' or torch.Tensor.")
-
-            logger.debug("🐛 [XYPlot] Sampling complete. Saving latent to temporary file...")
-            # Save the latent tensor directly to disk (move to CPU to free GPU memory)
-            torch.save(result_latent.cpu(), temp_filepath)
-            logger.debug(f"🐛 [XYPlot] Saved latent to: {temp_filepath}")
-            return {'samples': result_latent} # Return as ComfyLatentT dict for consistency
-        except Exception as e:
-            logger.error(f"❌ [XYPlot] Error during sampling or saving latent. This image will be a placeholder. Details: {e}", exc_info=True)
-            raise RuntimeError("Sampling or latent saving failed.") from e
-
-    def _load_latent_and_decode(self,
-                                vae: ComfyVAEObjectT,
-                                latent_filepath: str,
-                                device: torch.device = torch.device('cpu')
-                                ) -> TensorHWC:
-        """
-        Loads a latent tensor from file, decodes it using the VAE, and returns the image tensor.
-
-        Args:
-            vae (ComfyVAEObjectT): The ComfyUI VAE model object.
-            latent_filepath (str): Full path to the temporary latent file.
-            device (torch.device): The device to load the latent onto initially (e.g., 'cpu').
-
-        Returns:
-            TensorHWC: The decoded image tensor in [H, W, C] format.
-
-        Raises:
-            RuntimeError: If loading or decoding fails.
-        """
-        logger.debug(f"🐛 [XYPlot] Loading latent from {latent_filepath} and decoding...")
-        try:
-            latent_to_decode = torch.load(latent_filepath, map_location=device)
-            if latent_to_decode.dim() == 3: # If saved without batch dim, add it
-                latent_to_decode = latent_to_decode.unsqueeze(0)
-            
-            # Ensure latent is on the correct device for VAE decoding
-            latent_to_decode = latent_to_decode.to(vae.device)
-
-            img_tensor_chw = vae.decode(latent_to_decode)
-            logger.debug(f"🐛 [XYPlot] Decoding complete. Shape: {img_tensor_chw.shape}")
-            # Remove batch dim and permute: [C, H, W] -> [H, W, C]
-            img_tensor_hwc = img_tensor_chw.squeeze(0).permute(1, 2, 0)
-            return img_tensor_hwc # Return [H, W, C]
-        except Exception as e:
-            logger.error(f"❌ [XYPlot] Error decoding latent from {latent_filepath}. A placeholder image will be used for the grid. Details: {e}", exc_info=True)
-            raise RuntimeError(f"Failed to load or decode latent from {latent_filepath}.") from e
-
-    def _create_placeholder_latent(self, base_latent: ComfyLatentT, device: torch.device) -> ComfyLatentT:
-        """
-        Creates a black placeholder latent tensor with the same shape as the base latent.
-
-        Args:
-            base_latent (ComfyLatentT): The original input latent dictionary, used for shape.
-            device (torch.device): The device on which to create the placeholder tensor.
-
-        Returns:
-            ComfyLatentT: A dictionary containing the black placeholder latent tensor.
-
-        Raises:
-            RuntimeError: If placeholder latent creation fails.
-        """
-        try:
-            latent_samples = base_latent['samples']
-            # Create a zero tensor with the same shape and dtype as the original latent samples
-            placeholder_latent_samples = torch.zeros_like(latent_samples, device=device)
-            logger.info("ℹ️ [XYPlot] Created black placeholder latent due to generation error.")
-            return {'samples': placeholder_latent_samples}
-        except Exception as e_placeholder:
-            logger.error(f"❌ [XYPlot] Failed to create placeholder latent. This is a critical error. Details: {e_placeholder}", exc_info=True)
-            raise RuntimeError("Latent generation failed and placeholder latent creation also failed.") from e_placeholder
-
-    def _create_placeholder_image(self, H: int, W: int, C: int, device: torch.device) -> TensorHWC:
-        """
-        Creates a black placeholder image tensor with specified dimensions.
-        """
-        return torch.zeros((H, W, C), dtype=torch.float32, device=device)
-
-    def _generate_single_latent(
-        self,
-        base_model: ComfyModelObjectT,
-        base_clip: ComfyCLIPObjectT,
-        positive: ComfyConditioningT,
-        negative: ComfyConditioningT,
-        base_latent: ComfyLatentT,
-        seed: int,
-        steps: int,
-        cfg: float,
-        sampler_name: str,
-        scheduler: str,
-        loaded_lora: LoadedLoraT,
-        strength: float,
-        img_index: int,
-        lora_filename_part: str,
-        temp_filepath: str
-    ) -> str:
-        """
-        Generates a single latent tile using pre-loaded LoRA and saves it to a temporary file.
-        Handles errors by creating and saving a placeholder latent.
-
-        Args:
-            base_model (ComfyModelObjectT): The base ComfyUI model object.
-            base_clip (ComfyCLIPObjectT): The base ComfyUI CLIP object.
-            positive (ComfyConditioningT): Positive conditioning.
-            negative (ComfyConditioningT): Negative conditioning.
-            base_latent (ComfyLatentT): The initial latent image dictionary.
-            seed (int): The seed for random number generation.
-            steps (int): Number of sampling steps.
-            cfg (float): Classifier-free guidance scale.
-            sampler_name (str): Name of the sampler to use.
-            scheduler (str): Name of the scheduler to use.
-            loaded_lora (LoadedLoraT): Pre-loaded LoRA tensor or None.
-            strength (float): LoRA strength to apply.
-            img_index (int): Index of the current image in the plot (for logging/seed).
-            lora_filename_part (str): Cleaned LoRA filename for logging/temp file naming.
-            temp_filepath (str): Full path to save the generated (or placeholder) latent.
-
-        Returns:
-            str: The filepath of the saved latent (either generated or placeholder).
-
-        Raises:
-            RuntimeError: If latent generation fails and a placeholder cannot be created/saved.
-        """
-        logger.info(f"✨ [XYPlot] Generating latent {img_index} (LoRA: '{lora_filename_part}', Strength: {strength:.3f})")
-        current_model = None
-        current_clip = None
-        
-        try:
-            # 1. Clone base models
-            current_model = base_model.clone()
-            current_clip = base_clip.clone()
-
-            # 2. Apply LoRA (if pre-loaded)
-            if loaded_lora is not None:
-                logger.debug(f"🐛 [XYPlot] Applying pre-loaded LoRA: {lora_filename_part} with strength {strength:.3f}")
-                try:
-                    current_model, current_clip = comfy.sd.load_lora_for_models(
-                        current_model, current_clip, loaded_lora, strength, strength
-                    )
-                except Exception as e_apply:
-                    logger.warning(f"⚠️ [XYPlot] Failed to apply pre-loaded LoRA '{lora_filename_part}'. Skipping this LoRA for the current generation. Error: {e_apply}", exc_info=True)
-            else:
-                logger.debug(f"🐛 [XYPlot] Skipping LoRA application ('{lora_filename_part}' not loaded or is baseline).")
-
-            # 3. Prepare Latent (ensure batch size 1)
-            current_latent = self._prepare_latent_for_sampling(base_latent, positive)
-
-            # 4. Run Sampling and Save Latent
-            self._run_sampling_and_save_latent(
-                current_model, current_clip, positive, negative, current_latent,
-                seed + img_index - 1, # Increment seed per image
-                steps, cfg, sampler_name, scheduler,
-                temp_filepath # Pass filepath for saving
-            )
-            return temp_filepath # Return path on success
-
-        except Exception as e_generate:
-            logger.error(f"❌ [XYPlot] ERROR generating latent {img_index} (LoRA: '{lora_filename_part}', Strength: {strength:.3f}). A placeholder will be used. Error: {e_generate}", exc_info=True)
-            # Create and save placeholder latent on error
-            try:
-                # Ensure placeholder is created on CPU to avoid immediate GPU memory pressure
-                device = torch.device('cpu') 
-
-                placeholder_latent = self._create_placeholder_latent(base_latent, device)
-                torch.save(placeholder_latent['samples'].cpu(), temp_filepath) # Save placeholder to disk
-                logger.info(f"ℹ️ [XYPlot] Saved placeholder latent to: {temp_filepath}")
-                return temp_filepath # Return path to placeholder
-            except Exception as e_placeholder_fallback:
-                logger.critical(f"🚨 [XYPlot] CRITICAL: Failed to determine placeholder dimensions or create/save placeholder latent. Plot generation may be severely affected. Details: {e_placeholder_fallback}", exc_info=True)
-                # Re-raise the original generation error if placeholder fails
-                raise RuntimeError("Failed to generate latent and could not create/save placeholder.") from e_generate
-
-        finally: # This finally block belongs to the outer try in _generate_single_latent
-            # Clean up clones
-            del current_model
-            del current_clip
-            comfy.model_management.soft_empty_cache() # Ensure GPU memory is freed
-
-    def _save_tensor_to_file(self,
-                             image_tensor_hwc: TensorHWC,
-                             filepath: str):
-        """
-        Saves a [H, W, C] tensor (decoded image) to a file using PIL.
-
-        Args:
-            image_tensor_hwc (TensorHWC): The image tensor to save, expected shape [H, W, C].
-            filepath (str): The full path including filename and extension to save the image.
-
-        Raises:
-            IOError: If saving the image fails.
-        """
-        try:
-            # Convert tensor to PIL Image
-            img_tensor_float32 = image_tensor_hwc.float() # Ensure float32
-            img_np = img_tensor_float32.cpu().numpy()
-            img_pil = Image.fromarray(np.clip(img_np * 255.0, 0, 255).astype(np.uint8))
-            # Save the image
-            img_pil.save(filepath)
-            logger.debug(f"🐛 [XYPlot] Saved decoded image tensor to: {filepath}")
-        except Exception as e_save:
-            logger.warning(f"⚠️ [XYPlot] Failed to save decoded image tensor to {filepath}. This individual image may be missing. Error: {e_save}", exc_info=True)
-            # Raise the error so the main loop knows saving failed if needed
-            raise IOError(f"Failed to save image to {filepath}") from e_save
-
-    def _load_images_from_paths(self, image_paths: List[str], device: torch.device = torch.device('cpu')) -> List[TensorHWC]:
-        """
-        This function is no longer used for loading images for grid assembly.
-        Images are now decoded one by one from latents.
-        Keeping it as a placeholder or for other potential uses.
-        """
-        logger.warning("⚠️ [XYPlot] _load_images_from_paths is deprecated in this workflow and should not be called.")
-        return [] # Return empty list as it's not used for grid assembly anymore
-
-    # --------------------------------------------------------------------------
-    # Main Orchestration Method
-    # --------------------------------------------------------------------------
     def generate_plot(self,
                       model: ComfyModelObjectT,
                       clip: ComfyCLIPObjectT,
@@ -529,7 +232,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             # Input Validation: Check latent_image batch size
             if latent_image['samples'].shape[0] > 1:
                 logger.warning(f"⚠️ [XYPlot] Input latent_image has batch size {latent_image['samples'].shape[0]}. Only the first sample will be used for plot generation to ensure consistent grid cells.")
-                # Ensure the base_latent passed to _prepare_latent_for_sampling is also just the first sample
+                # Ensure the base_latent passed to prepare_latent_for_sampling is also just the first sample
                 latent_image['samples'] = latent_image['samples'][0:1]
 
             # Create temporary directory for latents
@@ -557,7 +260,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
 
                     try:
                         # Generate latent and save to temporary file
-                        saved_latent_path = self._generate_single_latent(
+                        saved_latent_path = generate_single_latent(
                             base_model=model, base_clip=clip,
                             positive=positive, negative=negative, base_latent=latent_image,
                             seed=seed + img_idx - 1, # Increment seed per image
@@ -571,7 +274,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                     except Exception as e_inner:
                          logger.error(f"❌ [XYPlot] Error processing latent {img_idx} for cell ({y_idx},{x_idx}). A placeholder will be used. Details: {e_inner}", exc_info=True)
                          generation_successful = False
-                         # If _generate_single_latent failed to save even a placeholder, this path won't be added.
+                         # If generate_single_latent failed to save even a placeholder, this path won't be added.
                          # If it saved a placeholder, the path is added and will be handled later.
                     finally:
                          comfy.model_management.soft_empty_cache() # Ensure GPU memory is freed after each latent generation
@@ -590,7 +293,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
             for i, latent_path in enumerate(generated_latent_paths):
                 try:
                     # Load latent from disk and decode
-                    decoded_img_tensor_hwc = self._load_latent_and_decode(vae, latent_path, device=vae_device)
+                    decoded_img_tensor_hwc = load_latent_and_decode(vae, latent_path, device=vae_device)
                     decoded_image_tensors_for_grid.append(decoded_img_tensor_hwc.cpu()) # Move to CPU for grid assembly
 
                     # Save individual decoded images if requested
@@ -602,7 +305,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                             perm_filename = f"row-{y_idx_str}_col-{x_idx_str}_lora-{safe_lora_name}_str-{strength_str}.png"
                             perm_filepath = os.path.join(run_folder, perm_filename)
                             try:
-                                self._save_tensor_to_file(decoded_img_tensor_hwc, perm_filepath)
+                                save_tensor_to_file(decoded_img_tensor_hwc, perm_filepath)
                             except Exception as e_perm_save:
                                 logger.warning(f"⚠️ [XYPlot] Failed to save individual image to permanent location {perm_filepath}. This image may be missing from your output folder. Error: {e_perm_save}")
                         else:
@@ -620,7 +323,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                         H_img, W_img = latent_shape[2] * 8, latent_shape[3] * 8
                         C_img = 3
                         # Ensure placeholder image is created on CPU
-                        placeholder_img = self._create_placeholder_image(H_img, W_img, C_img, torch.device('cpu'))
+                        placeholder_img = create_placeholder_image(H_img, W_img, C_img, torch.device('cpu'))
                         decoded_image_tensors_for_grid.append(placeholder_img)
                     except Exception as e_ph_create:
                         logger.critical(f"🚨 [XYPlot] CRITICAL: Failed to create placeholder image for grid assembly after decode error. Plot assembly may fail. Details: {e_ph_create}", exc_info=True)
@@ -700,6 +403,7 @@ class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
                     logger.info(f"🗑️ [XYPlot] Removed temporary directory for latents: {temp_dir}")
                 except Exception as e_cleanup:
                     logger.error(f"❌ [XYPlot] Failed to remove temporary directory {temp_dir}. Please manually delete it if it persists. Details: {e_cleanup}", exc_info=True)
+
             comfy.model_management.soft_empty_cache()
 
 # Note: Mappings are handled in xy_plotting/__init__.py
