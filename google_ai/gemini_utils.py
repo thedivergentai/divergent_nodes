@@ -247,7 +247,15 @@ def generate_content(
                 final_response_object = chunk # Keep track of the last chunk for usage_metadata
                 
                 if hasattr(chunk, 'candidates') and chunk.candidates:
-                    for part in chunk.candidates[0].content.parts:
+                    candidate_content = chunk.candidates[0].content
+                    if candidate_content is None:
+                        # This means the content was blocked, but no specific text was returned.
+                        # The finish_reason or prompt_feedback will explain why.
+                        logger.warning(f"Candidate content is None. This often indicates a safety block or other non-textual response. Chunk: {chunk}")
+                        # We will handle the block reason after the loop using final_response_object
+                        continue # Skip to next chunk or end of stream
+                    
+                    for part in candidate_content.parts:
                         if part.text:
                             # Count tokens of the current chunk's text using client.models.count_tokens
                             # This requires the client object and model name
