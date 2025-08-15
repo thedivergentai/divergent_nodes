@@ -196,7 +196,8 @@ def generate_content(
     thinking_config: Optional[types.ThinkingConfig] = None,
     max_retries: int = 3,
     retry_delay_seconds: int = 5,
-    cached_context: str = ""
+    cached_context: str = "",
+    output_thoughts: bool = False # Added new parameter
 ) -> Tuple[str, Optional[str], int, int, int]:
     """
     Generates content using genai.Client based on a list of content parts,
