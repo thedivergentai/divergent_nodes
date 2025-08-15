@@ -149,7 +149,8 @@ def assemble_image_grid(
 
 def _get_pil_font(font_size: int = 20) -> Optional[PilFontT]:
     """
-    Attempts to load a usable font (Arial, then default PIL bitmap font).
+    Attempts to load a usable font, prioritizing a bundled font, then system fonts,
+    and finally falling back to the default PIL bitmap font.
 
     Args:
         font_size (int): Desired font size (primarily for TrueType).
@@ -158,29 +159,43 @@ def _get_pil_font(font_size: int = 20) -> Optional[PilFontT]:
         Optional[PilFontT]: A loaded PIL font object, or None if no font could be loaded.
     """
     font: Optional[PilFontT] = None
-    font_paths_to_try = ["arial.ttf", "Arial.ttf"] # Common names
-    # Add more common system font paths if needed, e.g., from matplotlib
-    # font_paths_to_try.extend([...])
+    # Path to the bundled font relative to the current file
+    # Assumes Roboto-Regular.ttf is in source/assets/fonts/
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    bundled_font_path = os.path.join(current_dir, "..", "assets", "fonts", "Roboto-Regular.ttf")
+    bundled_font_path = os.path.normpath(bundled_font_path)
 
-    # Try loading TrueType fonts first
+    # 1. Try loading bundled font
+    if os.path.exists(bundled_font_path):
+        try:
+            font = ImageFont.truetype(bundled_font_path, font_size)
+            logger.debug(f"Loaded bundled font: {bundled_font_path} at size {font_size}")
+            return font
+        except IOError as e:
+            logger.warning(f"Failed to load bundled font '{bundled_font_path}': {e}", exc_info=True)
+    else:
+        logger.debug(f"Bundled font not found at: {bundled_font_path}")
+
+    # 2. Try common system fonts
+    font_paths_to_try = ["arial.ttf", "Arial.ttf"] # Common names
     for font_name in font_paths_to_try:
         try:
             font = ImageFont.truetype(font_name, font_size)
-            logger.debug(f"Loaded TrueType font: {font_name} at size {font_size}")
-            return font # Success
+            logger.debug(f"Loaded system font: {font_name} at size {font_size}")
+            return font
         except IOError:
-            logger.debug(f"TrueType font '{font_name}' not found.")
-            continue # Try next font
+            logger.debug(f"System font '{font_name}' not found.")
+            continue
 
-    # If TrueType fails, try the default PIL bitmap font
-    logger.warning(f"Common TrueType fonts not found. Attempting default PIL font.")
+    # 3. Fallback to default PIL bitmap font
+    logger.warning(f"No TrueType fonts found. Attempting default PIL font.")
     try:
         font = ImageFont.load_default()
         logger.debug("Loaded default PIL bitmap font.")
-        return font # Success
+        return font
     except IOError as e:
         logger.error(f"Could not load any font for label drawing. PIL default font failed: {e}", exc_info=True)
-        return None # Failure
+        return None
 
 def _calculate_required_padding(draw: PilDrawT, font: PilFontT,
                                 x_labels: List[str], y_labels: List[str],
