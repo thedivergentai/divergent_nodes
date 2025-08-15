@@ -19,6 +19,12 @@ import tempfile
 import shutil
 from typing import Dict, Any, Tuple, Optional, List, Union, Sequence, TypeAlias
 
+# Import ComfyUI types for better type hinting and autocomplete
+from comfy.comfy_types import ComfyNodeABC, IO, InputTypeDict
+
+# Import custom log level
+from ..shared_utils.logging_utils import SUCCESS_HIGHLIGHT
+
 # Import utility functions
 try:
     from .grid_assembly import assemble_image_grid, draw_labels_on_grid
@@ -56,7 +62,7 @@ ComfyLatentT: TypeAlias = Dict[str, torch.Tensor]
 LoadedLoraT: TypeAlias = Optional[Dict[str, torch.Tensor]]
 TensorHWC: TypeAlias = torch.Tensor # Expected shape [H, W, C]
 
-class LoraStrengthXYPlot:
+class LoraStrengthXYPlot(ComfyNodeABC): # Inherit from ComfyNodeABC
     """
     Generates an XY plot grid comparing LoRAs (X-axis) vs Strength (Y-axis).
 
@@ -64,11 +70,11 @@ class LoraStrengthXYPlot:
     individually, saving them to a temporary directory, and then assembling
     the grid from these files. Supports cancellation and optional preview.
     """
-    CATEGORY = "Divergent Nodes 👽/XY Plots"
-    OUTPUT_NODE = True
+    CATEGORY: str = "Divergent Nodes 👽/XY Plots" # Use type hint for CATEGORY
+    OUTPUT_NODE: bool = True # Use type hint for OUTPUT_NODE
 
     @classmethod
-    def INPUT_TYPES(cls) -> Dict[str, Dict[str, Any]]:
+    def INPUT_TYPES(cls) -> InputTypeDict: # Use InputTypeDict for type hinting
         """Defines the input types for the ComfyUI node interface."""
         try:
             sampler_list = comfy.samplers.KSampler.SAMPLERS or ["ERROR: No Samplers Found"]
@@ -83,38 +89,38 @@ class LoraStrengthXYPlot:
 
         return {
             "required": {
-                "model": ("MODEL", {"tooltip": "Input model."}),
-                "clip": ("CLIP", {"tooltip": "Input CLIP model."}),
-                "vae": ("VAE", {"tooltip": "Input VAE model."}),
-                "lora_folder_path": ("STRING", {"default": "loras/", "multiline": False, "tooltip": "Path to LoRA folder (relative to ComfyUI/models/loras or absolute)."}),
-                "positive": ("CONDITIONING", {"tooltip": "Positive conditioning."}),
-                "negative": ("CONDITIONING", {"tooltip": "Negative conditioning."}),
-                "latent_image": ("LATENT", {"tooltip": "Initial latent image."}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
-                "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "model": (IO.MODEL, {"tooltip": "Input model."}), # Use IO.MODEL
+                "clip": (IO.CLIP, {"tooltip": "Input CLIP model."}), # Use IO.CLIP
+                "vae": (IO.VAE, {"tooltip": "Input VAE model."}), # Use IO.VAE
+                "lora_folder_path": (IO.STRING, {"default": "loras/", "multiline": False, "tooltip": "Path to LoRA folder (relative to ComfyUI/models/loras or absolute)."}), # Use IO.STRING
+                "positive": (IO.CONDITIONING, {"tooltip": "Positive conditioning."}), # Use IO.CONDITIONING
+                "negative": (IO.CONDITIONING, {"tooltip": "Negative conditioning."}), # Use IO.CONDITIONING
+                "latent_image": (IO.LATENT, {"tooltip": "Initial latent image."}), # Use IO.LATENT
+                "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff}), # Use IO.INT
+                "steps": (IO.INT, {"default": 20, "min": 1, "max": 10000}), # Use IO.INT
+                "cfg": (IO.FLOAT, {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1}), # Use IO.FLOAT
                 "sampler_name": (sampler_list,),
                 "scheduler": (scheduler_list,),
-                "x_lora_steps": ("INT", {"default": 3, "min": 0, "max": 100, "tooltip": "Number of LoRAs for X-axis (0=all, 1=last)."}),
-                "y_strength_steps": ("INT", {"default": 3, "min": 1, "max": 100, "tooltip": "Number of strength steps for Y-axis."}),
-                "max_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.01}),
+                "x_lora_steps": (IO.INT, {"default": 3, "min": 0, "max": 100, "tooltip": "Number of LoRAs for X-axis (0=all, 1=last)."}), # Use IO.INT
+                "y_strength_steps": (IO.INT, {"default": 3, "min": 1, "max": 100, "tooltip": "Number of strength steps for Y-axis."}), # Use IO.INT
+                "max_strength": (IO.FLOAT, {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.01}), # Use IO.FLOAT
             },
             "optional": {
-                "save_individual_images": ("BOOLEAN", {"default": False, "tooltip": "Save individual grid images to the output folder."}),
-                "display_last_image": ("BOOLEAN", {"default": False, "tooltip": "Output the last generated image as a preview."}), # New Input
-                "output_folder_name": ("STRING", {"default": "XYPlot_LoRA-Strength"}),
-                "row_gap": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1}),
-                "col_gap": ("INT", {"default": 10, "min": 0, "max": 200, "step": 1}),
-                "draw_labels": ("BOOLEAN", {"default": True}),
-                "x_axis_label": ("STRING", {"default": "LoRA"}),
-                "y_axis_label": ("STRING", {"default": "Strength"}),
+                "save_individual_images": (IO.BOOLEAN, {"default": False, "tooltip": "Save individual grid images to the output folder."}), # Use IO.BOOLEAN
+                "display_last_image": (IO.BOOLEAN, {"default": False, "tooltip": "Output the last generated image as a preview."}), # New Input, Use IO.BOOLEAN
+                "output_folder_name": (IO.STRING, {"default": "XYPlot_LoRA-Strength"}), # Use IO.STRING
+                "row_gap": (IO.INT, {"default": 10, "min": 0, "max": 200, "step": 1}), # Use IO.INT
+                "col_gap": (IO.INT, {"default": 10, "min": 0, "max": 200, "step": 1}), # Use IO.INT
+                "draw_labels": (IO.BOOLEAN, {"default": True}), # Use IO.BOOLEAN
+                "x_axis_label": (IO.STRING, {"default": "LoRA"}), # Use IO.STRING
+                "y_axis_label": (IO.STRING, {"default": "Strength"}), # Use IO.STRING
             },
         }
 
     # Updated return types and names
-    RETURN_TYPES = ("IMAGE", "IMAGE")
-    RETURN_NAMES = ("xy_plot_image", "last_generated_image")
-    FUNCTION = "generate_plot"
+    RETURN_TYPES: Tuple[str] = (IO.IMAGE, IO.IMAGE) # Use IO.IMAGE
+    RETURN_NAMES: Tuple[str] = ("xy_plot_image", "last_generated_image")
+    FUNCTION: str = "generate_plot" # Use type hint for FUNCTION
 
     # --------------------------------------------------------------------------
     # Core Image Generation Logic (Internal Helpers)
@@ -318,7 +324,7 @@ class LoraStrengthXYPlot:
             del current_clip
 
         if img_tensor_hwc is None: # Should not happen due to error handling, but safeguard
-             raise RuntimeError(f"Image tensor generation failed unexpectedly for index {img_index}.")
+             raise RuntimeError(f"Image tensor generation failed unexpectedly for index {img_idx}.")
 
         return img_tensor_hwc # Return [H, W, C] tensor (either generated or placeholder)
 
@@ -517,7 +523,7 @@ class LoraStrengthXYPlot:
 
             end_time = datetime.now()
             duration = end_time - start_time
-            logger.info(f"--- XY Plot: Generation Finished (Duration: {duration}) ---")
+            logger.log(SUCCESS_HIGHLIGHT, f"--- XY Plot: Generation Finished (Duration: {duration}) ---") # Use SUCCESS_HIGHLIGHT
             if not generation_successful:
                  logger.warning("Plot generation finished, but one or more images may have failed or process was interrupted.")
 

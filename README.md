@@ -39,6 +39,20 @@ This repository contains a collection of custom nodes for ComfyUI designed to in
 
 The nodes should now appear in the ComfyUI node menu under their respective categories.
 
+## Enhanced Logging
+
+Divergent Nodes now features enhanced logging in your ComfyUI console and toast notifications for better readability and a more enjoyable experience.
+
+*   **Clear Identification:** All log messages from Divergent Nodes are prefixed with `[👽 NodeName]` (e.g., `[👽 GeminiNode]`) to easily identify their source.
+*   **Visual Cues:** Log messages are colored and include emojis to quickly convey their status:
+    *   **INFO:** ✅ Green - For successful operations and general information.
+    *   **WARNING:** ⚠️ Yellow - For non-critical issues or important notices.
+    *   **ERROR:** ❌ Red - For failures and critical problems.
+    *   **DEBUG:** 🐛 Cyan - For detailed debugging information (usually hidden).
+    *   **SPECIAL SUCCESS:** 🎉✨ Bold Bright Magenta - For major milestones like successful image generation or model downloads.
+
+For a detailed key of all log messages and their meanings, please refer to the [Divergent Nodes Wiki Logging section](divergent_nodes.wiki/Logging.md).
+
 ## Included Nodes
 
 This pack currently includes the following nodes:

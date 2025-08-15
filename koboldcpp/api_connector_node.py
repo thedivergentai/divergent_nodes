@@ -1,22 +1,27 @@
-import sys # Keep sys import if needed elsewhere, otherwise remove
+import sys
 import re
 import requests
 import torch
-import json # Import json for decoding potential errors
-from typing import Optional, Dict, Any, Tuple, List, TypeAlias
-import logging # Import standard logging
+import json
+import logging
+from typing import Optional, Dict, Any, Tuple, List
+
+# Import ComfyUI types for better type hinting and autocomplete
+from comfy.comfy_types import ComfyNodeABC, IO, InputTypeDict
 
 # Use relative import from the parent directory's utils
 try:
     # Assumes shared_utils is one level up from koboldcpp
-    from ..shared_utils import tensor_to_pil, pil_to_base64
+    from ..shared_utils.image_conversion import tensor_to_pil, pil_to_base64
+    from ..shared_utils.logging_utils import SUCCESS_HIGHLIGHT # Import custom log level
 except ImportError:
     # Fallback for direct execution or different structure
     logging.warning("Could not perform relative import for shared_utils, attempting direct import.")
     # Ensure logger is configured before first use if fallback occurs
     if not logging.getLogger().hasHandlers():
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    from shared_utils import tensor_to_pil, pil_to_base64
+    from shared_utils.image_conversion import tensor_to_pil, pil_to_base64
+    from shared_utils.logging_utils import SUCCESS_HIGHLIGHT # Import custom log level
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ if not logging.getLogger().hasHandlers():
 
 # --- Basic API Connector Node ---
 
-class KoboldCppApiNode:
+class KoboldCppApiNode(ComfyNodeABC): # Inherit from ComfyNodeABC
     """
     ComfyUI node to connect to an ALREADY RUNNING KoboldCpp instance via its API.
 
@@ -36,10 +41,10 @@ class KoboldCppApiNode:
     running independently.
     """
     # Define types using ComfyUI conventions
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("text",)
-    FUNCTION = "execute"
-    CATEGORY = "Divergent Nodes 👽/KoboldCpp" # Keep category consistent
+    RETURN_TYPES: Tuple[str] = (IO.STRING,)
+    RETURN_NAMES: Tuple[str] = ("text",)
+    FUNCTION: str = "execute"
+    CATEGORY: str = "Divergent Nodes 👽/KoboldCpp" # Keep category consistent
 
     def __init__(self):
         """Initializes the API Connector node instance."""
@@ -47,7 +52,7 @@ class KoboldCppApiNode:
         # No instance-specific state needed
 
     @classmethod
-    def INPUT_TYPES(cls) -> Dict[str, Dict[str, Any]]:
+    def INPUT_TYPES(cls) -> InputTypeDict: # Use InputTypeDict for type hinting
         """
         Defines the input types for the ComfyUI node interface.
 
@@ -58,27 +63,27 @@ class KoboldCppApiNode:
         """
         return {
             "required": {
-                "api_url": ("STRING", {
+                "api_url": (IO.STRING, {
                     "multiline": False,
                     "default": "http://127.0.0.1:5001", # Default to common local KoboldCpp port
                     "tooltip": "Base URL of the running KoboldCpp API (e.g., http://127.0.0.1:5001)."
                 }),
                 # --- Generation Args (Passed via API JSON) ---
-                "prompt": ("STRING", {
+                "prompt": (IO.STRING, {
                     "multiline": True,
                     "default": "Describe the image.",
                     "tooltip": "The text prompt for generation."
                 }),
-                "max_length": ("INT", {"default": 512, "min": 1, "max": 16384, "step": 1, "tooltip": "Maximum number of tokens to generate."}),
-                "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "Sampling temperature."}),
-                "top_p": ("FLOAT", {"default": 0.92, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Nucleus sampling probability."}),
-                "top_k": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "Top-K sampling (0 disables)."}),
-                "rep_pen": ("FLOAT", {"default": 1.1, "min": 0.0, "max": 3.0, "step": 0.01, "tooltip": "Repetition penalty."}),
+                "max_length": (IO.INT, {"default": 512, "min": 1, "max": 16384, "step": 1, "tooltip": "Maximum number of tokens to generate."}),
+                "temperature": (IO.FLOAT, {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "Sampling temperature."}),
+                "top_p": (IO.FLOAT, {"default": 0.92, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Nucleus sampling probability."}),
+                "top_k": (IO.INT, {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "Top-K sampling (0 disables)."}),
+                "rep_pen": (IO.FLOAT, {"default": 1.1, "min": 0.0, "max": 3.0, "step": 0.01, "tooltip": "Repetition penalty."}),
             },
             "optional": {
                  # --- Optional Generation Args (Passed via API JSON) ---
-                "image_optional": ("IMAGE", {"tooltip": "Optional image input for multimodal models."}), # ComfyUI's IMAGE type
-                "stop_sequence": ("STRING", {
+                "image_optional": (IO.IMAGE, {"tooltip": "Optional image input for multimodal models."}), # ComfyUI's IMAGE type
+                "stop_sequence": (IO.STRING, {
                     "multiline": True,
                      "default": "", # Comma or newline separated
                      "tooltip": "Comma or newline-separated strings to stop generation at."
@@ -227,7 +232,7 @@ class KoboldCppApiNode:
                 # Extract text from the first result
                 generated_text = results[0].get("text")
                 if generated_text is not None:
-                     logger.info("API call successful, received generated text.")
+                     logger.log(SUCCESS_HIGHLIGHT, "API call successful, received generated text.") # Use SUCCESS_HIGHLIGHT
                      generated_text = str(generated_text) # Ensure string type
                 else:
                      generated_text = f"{error_prefix} 'text' field not found in API response results."

@@ -14,7 +14,7 @@ import torch
 from google import genai
 from google.genai import types
 from google.api_core import exceptions as google_exceptions
-from google.generativeai import GenerativeModel # Added import for GenerativeModel
+from google.genai import GenerativeModel
 
 # Import the new config manager
 from ..shared_utils.config_manager import load_config

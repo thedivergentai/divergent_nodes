@@ -7,10 +7,17 @@ import json
 import random
 import logging
 import re # Import re for regex operations
+from typing import Tuple, Dict, Any, Optional, List
+
+# Import ComfyUI types for better type hinting and autocomplete
+from comfy.comfy_types import ComfyNodeABC, IO, InputTypeDict
 
 # Assuming ComfyUI's folder_paths and cli_args are available in the node environment
 import folder_paths
 from comfy.cli_args import args
+
+# Import custom log level
+from ..shared_utils.logging_utils import SUCCESS_HIGHLIGHT
 
 # --- Utility function copied from source/shared_utils/text_encoding_utils.py ---
 # This is copied here to ensure it's available within the custom node environment
@@ -63,27 +70,29 @@ def sanitize_filename(filename: str, max_length: int = 200) -> str:
 # --- End of Utility functions ---
 
 
-class SaveImageEnhancedNode:
+class SaveImageEnhancedNode(ComfyNodeABC): # Inherit from ComfyNodeABC
+    """
+    A ComfyUI node for saving images with enhanced options, including
+    custom output folders, flexible filename prefixes, and optional caption saving.
+    """
     def __init__(self):
         # Default output directory relative to ComfyUI's output
         self.output_dir = folder_paths.get_output_directory()
         self.type = "output"
-        # Use a random prefix for temporary files if needed, but not for final output
-        # self.prefix_append = "_temp_" + ''.join(random.choice("abcdefghijklmnopqrstupvxyz") for x in range(5))
         self.compress_level = 4 # Default PNG compression level
 
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict: # Use InputTypeDict for type hinting
         return {
             "required": {
-                "images": ("IMAGE", {"tooltip": "The images to save."}),
-                "filename_prefix": ("STRING", {"default": "ComfyUI_DN_%date:yyyy-MM-dd%", "tooltip": "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes. Supports %batch_num%."}),
-                "output_folder": ("STRING", {"default": "output", "tooltip": "The folder to save the images to. Can be relative to ComfyUI's output or an absolute path."}),
-                "add_counter_suffix": ("BOOLEAN", {"default": True, "tooltip": "If True, adds an incrementing numerical suffix (_00001_) to the filename to prevent overwriting."}),
+                "images": (IO.IMAGE,), # Use IO.IMAGE
+                "filename_prefix": (IO.STRING, {"default": "ComfyUI_DN_%date:yyyy-MM-dd%", "tooltip": "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes. Supports %batch_num%."}),
+                "output_folder": (IO.STRING, {"default": "output", "tooltip": "Subfolder within ComfyUI's output directory, or an absolute path."}),
+                "add_counter_suffix": (IO.BOOLEAN, {"default": True, "tooltip": "If True, adds an incrementing numerical suffix (_00001_) to the filename to prevent overwriting."}),
             },
             "optional": {
-                "caption_file_extension": ("STRING", {"default": ".txt", "tooltip": "The extension for the caption file."}),
-                "caption": ("STRING", {"forceInput": True, "tooltip": "string to save as .txt file"}),
+                "caption_file_extension": (IO.STRING, {"default": ".txt", "tooltip": "The extension for the caption file."}),
+                "caption": (IO.STRING, {"forceInput": True, "multiline": True, "default": "", "tooltip": "Optional: String to save as a caption file alongside the image."}),
             },
             "hidden": {
                 "prompt": "PROMPT", # Used for saving metadata in PNG
@@ -91,37 +100,36 @@ class SaveImageEnhancedNode:
             },
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("last_filename_saved",)
-    FUNCTION = "save_images"
+    RETURN_TYPES: Tuple[str] = (IO.STRING,) # Use IO.STRING
+    RETURN_NAMES: Tuple[str] = ("last_filename_saved",)
+    FUNCTION: str = "save_images" # Use type hint for FUNCTION
 
-    OUTPUT_NODE = True
+    OUTPUT_NODE: bool = True # Use type hint for OUTPUT_NODE
 
-    CATEGORY = "Divergent Nodes 👽/Image" # New category for Divergent Nodes
-    DESCRIPTION = "Saves the input images to a specified directory with optional caption and filename counter."
+    CATEGORY: str = "Divergent Nodes 👽/Image" # New category for Divergent Nodes
+    DESCRIPTION: str = "Saves the input images to a specified directory with optional caption and filename counter."
 
-    def save_images(self, images, output_folder, filename_prefix="ComfyUI_DN_%date:yyyy-MM-dd%", add_counter_suffix=True, prompt=None, extra_pnginfo=None, caption=None, caption_file_extension=".txt"):
+    def save_images(self, images: torch.Tensor, output_folder: str, filename_prefix: str="ComfyUI_DN_%date:yyyy-MM-dd%", add_counter_suffix: bool=True, prompt: Optional[Dict[str, Any]]=None, extra_pnginfo: Optional[Dict[str, Any]]=None, caption: Optional[str]=None, caption_file_extension: str=".txt") -> Tuple[str]:
+        """
+        Saves images with enhanced options.
+        """
+        full_output_folder = self._get_full_output_folder(output_folder)
+        os.makedirs(full_output_folder, exist_ok=True)
+        logger.info(f"Saving images to: {full_output_folder}")
 
-        # Resolve the full output folder path
-        if os.path.isabs(output_folder):
-            full_output_folder = output_folder
-        else:
-            # Assume relative to ComfyUI's output directory
-            self.output_dir = folder_paths.get_output_directory()
-            full_output_folder = os.path.join(self.output_dir, output_folder)
-
-        # Ensure the output directory exists
-        if not os.path.exists(full_output_folder):
-            os.makedirs(full_output_folder, exist_ok=True)
-
-        results = list()
-        last_saved_filename = ""
-
+        last_filename = ""
+        
         # Use ComfyUI's path helper to get base filename and initial counter
         # We will modify the filename later based on add_counter_suffix
         # The counter returned here is based on existing files matching the prefix pattern
         # Strip leading/trailing whitespace from filename_prefix
         cleaned_filename_prefix = filename_prefix.strip()
+        
+        # Ensure images is not empty to avoid index error
+        if not images.shape[0] > 0:
+            logger.error("No images provided to Save Image Enhanced node.")
+            return ("ERROR: No images provided.",)
+
         _, base_filename_without_counter, initial_counter, subfolder, _ = folder_paths.get_save_image_path(
             cleaned_filename_prefix, full_output_folder, images[0].shape[1], images[0].shape[0]
         )
@@ -129,89 +137,98 @@ class SaveImageEnhancedNode:
         current_counter = initial_counter
 
         for batch_number, image in enumerate(images):
-            i = 255. * image.cpu().numpy()
-            img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+            # Convert tensor to PIL Image
+            pil_image = tensor_to_pil(image)
 
-            metadata = None
-            if not args.disable_metadata:
-                metadata = PngInfo()
-                if prompt is not None:
-                    # Ensure prompt metadata is UTF-8 friendly
-                    metadata.add_text("prompt", json.dumps(ensure_utf8_friendly(prompt)))
-                if extra_pnginfo is not None:
-                    for x in extra_pnginfo:
-                        metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+            # Prepare filename
+            filename = self._get_image_filename(filename_prefix, current_counter, pil_image, prompt, extra_pnginfo, add_counter_suffix)
+            
+            # Sanitize filename to prevent OSError
+            sanitized_filename = sanitize_filename(filename)
+            
+            full_path_no_ext = os.path.join(full_output_folder, sanitized_filename)
+            full_image_path = f"{full_path_no_ext}.png" # Always save as PNG
 
-            # Construct the filename based on prefix, batch number, and optional counter
-            # Replace %batch_num% placeholder
-            filename_part = base_filename_without_counter.replace("%batch_num%", str(batch_number))
-
-            if add_counter_suffix:
-                # Include the counter suffix
-                file = f"{filename_part}_{current_counter:05}.png"
-            else:
-                # Omit the counter suffix
-                file = f"{filename_part}.png"
-
-            # Sanitize the filename before creating the full path
-            sanitized_file = sanitize_filename(file)
-            file_path = os.path.join(full_output_folder, sanitized_file)
-
+            # Save image
             try:
-                # Save the image
-                img.save(file_path, pnginfo=metadata, compress_level=self.compress_level)
-                logger.info(f"Image saved successfully: {file_path}")
-            except IOError as e:
-                error_msg = f"ERROR: Failed to save image to {file_path}: {e}"
-                logger.error(error_msg, exc_info=True)
-                return (error_msg,) # Return error and stop processing this batch
+                info = PngInfo() if not args.disable_metadata else None
+                if info:
+                    if prompt is not None:
+                        # Ensure prompt metadata is UTF-8 friendly
+                        info.add_text("prompt", json.dumps(ensure_utf8_friendly(prompt)))
+                    if extra_pnginfo is not None:
+                        for x in extra_pnginfo:
+                            # Ensure all extra_pnginfo values are UTF-8 friendly
+                            info.add_text(x, json.dumps(ensure_utf8_friendly(extra_pnginfo[x])))
+                
+                pil_image.save(full_image_path, pnginfo=info, compress_level=self.compress_level)
+                logger.log(SUCCESS_HIGHLIGHT, f"Image saved: {full_image_path}") # Use SUCCESS_HIGHLIGHT
+                last_filename = full_image_path
             except Exception as e:
-                error_msg = f"ERROR: An unexpected error occurred while saving image to {file_path}: {e}"
-                logger.error(error_msg, exc_info=True)
-                return (error_msg,) # Return error and stop processing this batch
+                logger.error(f"Error saving image {full_image_path}: {e}", exc_info=True)
+                last_filename = f"ERROR: Could not save image {full_image_path} - {e}"
+                continue # Try to save next image
 
-            # Save the caption if provided
-            if caption is not None:
-                # Construct caption filename
-                if add_counter_suffix:
-                     # Include the counter suffix in caption filename
-                    txt_file = f"{filename_part}_{current_counter:05}{caption_file_extension}"
-                else:
-                    # Omit the counter suffix in caption filename
-                    txt_file = f"{filename_part}{caption_file_extension}"
-
-                # Sanitize the caption filename as well
-                sanitized_txt_file = sanitize_filename(txt_file)
-                txt_file_path = os.path.join(full_output_folder, sanitized_txt_file)
-
+            # Save caption if provided
+            if caption and caption_file_extension:
+                caption_filename = f"{full_path_no_ext}{caption_file_extension}"
                 try:
-                    # Save the caption with UTF-8 encoding and sanitization
-                    with open(txt_file_path, 'w', encoding='utf-8') as f:
-                        f.write(ensure_utf8_friendly(caption))
-                    logger.info(f"Caption saved successfully: {txt_file_path}")
-                except IOError as e:
-                    error_msg = f"ERROR: Failed to save caption to {txt_file_path}: {e}"
-                    logger.error(error_msg, exc_info=True)
-                    # Continue with image saving, but log caption error
-                    # Decide if this should halt the node or just log
-                    # For now, log and continue for image, but return error if it's the only output
-                    pass # Do not return here, let image saving proceed/complete
+                    # Ensure caption is UTF-8 friendly
+                    safe_caption = ensure_utf8_friendly(caption)
+                    with open(caption_filename, "w", encoding="utf-8") as f:
+                        f.write(safe_caption)
+                    logger.info(f"Caption saved: {caption_filename}")
                 except Exception as e:
-                    error_msg = f"ERROR: An unexpected error occurred while saving caption to {txt_file_path}: {e}"
-                    logger.error(error_msg, exc_info=True)
-                    pass # Do not return here
+                    logger.error(f"Error saving caption {caption_filename}: {e}", exc_info=True)
 
-            results.append({
-                "filename": file,
-                "subfolder": subfolder, # subfolder is relative to ComfyUI's output_dir
-                "type": self.type
-            })
-            last_saved_filename = file_path # Store the full path of the last saved file
-
-            # Increment counter only if suffix is added, otherwise it's effectively static per prefix+batch_num
+            # Increment counter only if suffix is added
             if add_counter_suffix:
                 current_counter += 1
 
-        # The UI expects a list of results, but the node output is a single string
-        # We return the full path of the last saved file as the node output
-        return (last_saved_filename,)
+        return (last_filename,)
+
+    def _get_full_output_folder(self, output_folder_input: str) -> str:
+        """
+        Determines the full path for the output folder.
+        If output_folder_input is an absolute path, use it directly.
+        Otherwise, treat it as a subfolder relative to ComfyUI's output directory.
+        """
+        if os.path.isabs(output_folder_input):
+            return output_folder_input
+        else:
+            return os.path.join(self.output_dir, output_folder_input)
+
+    def _get_image_filename(self, filename_prefix: str, index: int, pil_image: Image.Image,
+                            prompt: Optional[Dict[str, Any]], extra_pnginfo: Optional[Dict[str, Any]],
+                            add_counter_suffix: bool) -> str:
+        """
+        Generates a dynamic filename based on the prefix, index, image properties, and prompt info.
+        """
+        # Replace date placeholders
+        filename = filename_prefix.replace("%date:yyyy-MM-dd%", time.strftime("%Y-%m-%d"))
+        filename = filename.replace("%date:yyyyMMdd_HHmmss%", time.strftime("%Y%m%d_%H%M%S"))
+
+        # Replace image dimension placeholders
+        filename = filename.replace("%width%", str(pil_image.width))
+        filename = filename.replace("%height%", str(pil_image.height))
+
+        # Replace batch number placeholder
+        # Note: %batch_num% is typically 0-indexed for the current batch,
+        # while 'index' here is the global counter.
+        # If user expects %batch_num% to be 0-indexed for current batch,
+        # this needs adjustment. For now, using global 'index'.
+        filename = filename.replace("%batch_num%", str(index).zfill(5)) # Pad with zeros
+
+        # Replace placeholders from other nodes (e.g., %Empty Latent Image.width%)
+        if prompt:
+            for node_id, node_data in prompt.items():
+                if isinstance(node_data, dict) and "inputs" in node_data:
+                    for input_name, input_value in node_data["inputs"].items():
+                        placeholder = f"%{node_id}.{input_name}%"
+                        if placeholder in filename:
+                            filename = filename.replace(placeholder, str(input_value))
+        
+        # The counter suffix is now handled by the main loop's `current_counter`
+        # and the `add_counter_suffix` logic.
+        # This function now just prepares the base filename part.
+        return filename
