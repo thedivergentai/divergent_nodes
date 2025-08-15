@@ -158,7 +158,6 @@ class GeminiNode:
                  "extended_thinking": ("BOOLEAN", {"default": True, "tooltip": "If true, the model may use extended thinking (internal reasoning) if supported."}),
                  "thinking_token_budget": ("INT", {"default": -1, "min": -1, "max": 8192, "step": 1, "tooltip": "Token budget for model's thinking process. -1 for automatic, 0 to disable."}),
                  "output_thoughts": ("BOOLEAN", {"default": False, "tooltip": "If true, the model's internal thought process will be included in the output text. Otherwise, thoughts are suppressed."}),
-                 "cached_context": ("STRING", {"multiline": True, "default": "", "tooltip": "Optional: The text context to cache. If provided, this context will be cached and reused for subsequent requests."}),
             }
         }
 
@@ -181,9 +180,8 @@ class GeminiNode:
         retry_delay_seconds: int = 5,
         extended_thinking: bool = True,
         thinking_token_budget: int = -1,
-        output_thoughts: bool = False, # New parameter
-        cached_context: str = "",
-    ) -> Tuple[str]: # Only text output
+        output_thoughts: bool = False,
+    ) -> Tuple[str]:
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
         Returns a tuple: (generated_text,).
@@ -282,8 +280,7 @@ class GeminiNode:
                 thinking_config=thinking_config, # Pass thinking_config here
                 max_retries=max_retries,
                 retry_delay_seconds=retry_delay_seconds,
-                cached_context=cached_context,
-                output_thoughts=output_thoughts, # Pass output_thoughts here
+                output_thoughts=output_thoughts,
             )
             # Prioritize showing the API block error message if it exists
             final_output = response_error_msg if response_error_msg else generated_text

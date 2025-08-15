@@ -196,8 +196,7 @@ def generate_content(
     thinking_config: Optional[types.ThinkingConfig] = None,
     max_retries: int = 3,
     retry_delay_seconds: int = 5,
-    cached_context: str = "",
-    output_thoughts: bool = False # Added new parameter
+    output_thoughts: bool = False
 ) -> Tuple[str, Optional[str], int, int, int]:
     """
     Generates content using genai.Client based on a list of content parts,
@@ -238,35 +237,11 @@ def generate_content(
             logger.debug(f"Sending request to Gemini API model '{model_name}' (Attempt {current_retry + 1}/{max_retries + 1})...")
             
             # Use streaming to control output tokens
-            if cached_context:
-                cache_display_name = hashlib.sha256(cached_context.encode()).hexdigest()
-                try:
-                    cached_content_obj = client.caches.get(name=f"cachedContents/{cache_display_name}")
-                    logger.info(f"Retrieved cached content: {cached_content_obj.name}")
-                except google_exceptions.NotFound:
-                    logger.info(f"Cached content '{cache_display_name}' not found. Creating new cache entry.")
-                    cached_content_obj = client.caches.create(
-                        config=types.CreateCachedContentConfig(
-                            model=model_name,
-                            display_name=cache_display_name,
-                            contents=[types.Content(parts=[types.Part.from_text(cached_context)])],
-                            ttl="3600s" # Cache for 1 hour, adjust as needed
-                        )
-                    )
-                    logger.info(f"Created new cached content: {cached_content_obj.name}")
-
-                response_stream = client.models.generate_content_stream(
-                    model=model_name,
-                    contents=contents,
-                    config=full_config,
-                    cached_content=cached_content_obj.name # Pass the cached content name
-                )
-            else:
-                response_stream = client.models.generate_content_stream(
-                    model=model_name,
-                    contents=contents,
-                    config=full_config,
-                )
+            response_stream = client.models.generate_content_stream(
+                model=model_name,
+                contents=contents,
+                config=full_config,
+            )
 
             full_response_text_list = []
             current_response_tokens = 0
