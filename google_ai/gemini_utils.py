@@ -290,7 +290,7 @@ def generate_content(
                                 full_response_text_list.append(part.text)
                                 current_response_tokens += chunk_token_count
                         elif part.thought:
-                            logger.debug(f"Received thought part: {part.text}") # Log thought parts, but don't add to response
+                            logger.debug("Received thought part (content suppressed).") # Log thought parts, but don't add to response
                         else:
                             logger.warning(f"Received part with no text or thought. Type: {type(part)}, Attributes: {dir(part)}")
                 else:
