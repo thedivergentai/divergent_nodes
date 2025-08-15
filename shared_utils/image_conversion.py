@@ -38,18 +38,25 @@ def tensor_to_pil(tensor: Optional[torch.Tensor]) -> Optional[PilImageT]:
     if not isinstance(tensor, torch.Tensor):
         logger.error(f"Input is not a torch.Tensor, but {type(tensor)}. Cannot convert to PIL.")
         return None
-    if tensor.ndim != 4:
-        logger.error(f"Input tensor has incorrect dimensions ({tensor.ndim}). Expected 4 (B, H, W, C).")
-        return None
-    if tensor.shape[0] == 0: # Check if batch dimension is empty
-        logger.error("Input tensor batch dimension is empty (size 0).")
+    # Handle both 4D (B, H, W, C) and 3D (H, W, C) tensors
+    if tensor.ndim == 4:
+        if tensor.shape[0] == 0: # Check if batch dimension is empty
+            logger.error("Input tensor batch dimension is empty (size 0).")
+            return None
+        # Get first image from batch
+        img_tensor_slice = tensor[0].detach().cpu()
+        logger.debug(f"Processing 4D tensor slice with shape: {img_tensor_slice.shape} and dtype: {img_tensor_slice.dtype}")
+    elif tensor.ndim == 3:
+        # Use 3D tensor directly (single image)
+        img_tensor_slice = tensor.detach().cpu()
+        logger.debug(f"Processing 3D tensor slice with shape: {img_tensor_slice.shape} and dtype: {img_tensor_slice.dtype}")
+    else:
+        logger.error(f"Input tensor has incorrect dimensions ({tensor.ndim}). Expected 3 (H, W, C) or 4 (B, H, W, C).")
         return None
 
-    # Process the first image in the batch
     try:
-        # Get first image, ensure CPU, detach from graph
-        img_tensor_slice = tensor[0].detach().cpu()
-        logger.debug(f"Processing tensor slice with shape: {img_tensor_slice.shape} and dtype: {img_tensor_slice.dtype}")
+        # Convert to numpy array
+        img_np: np.ndarray = img_tensor_slice.numpy()
 
         # Convert to numpy array
         img_np: np.ndarray = img_tensor_slice.numpy()
