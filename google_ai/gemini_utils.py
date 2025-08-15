@@ -22,9 +22,9 @@ from ..shared_utils.logging_utils import SUCCESS_HIGHLIGHT # Import SUCCESS_HIGH
 # Setup logger for this module
 logger = logging.getLogger(__name__)
 
-# Suppress verbose HTTP request logging from google-api-core
-logging.getLogger('google.api_core.grpc_helpers').setLevel(logging.WARNING)
-logging.getLogger('google.api_core.bidi').setLevel(logging.WARNING)
+# Suppress verbose HTTP request logging from google-api-core and its sub-loggers
+# Setting the top-level 'google.api_core' logger to ERROR will silence most verbose HTTP/RPC logs.
+logging.getLogger('google.api_core').setLevel(logging.ERROR)
 
 
 # --- Type Aliases ---

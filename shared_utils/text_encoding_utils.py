@@ -12,7 +12,6 @@ def ensure_utf8_friendly(text_input: str) -> str:
         A UTF-8 friendly version of the string.
     """
     if not isinstance(text_input, str):
-        logger.warning(f"ensure_utf8_friendly received non-string input: {type(text_input)}. Converting to string.")
         text_input = str(text_input)
     try:
         # Encode to bytes using UTF-8, replacing errors, then decode back to string
