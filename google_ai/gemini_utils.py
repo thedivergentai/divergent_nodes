@@ -240,18 +240,26 @@ def generate_content(
             # Use streaming to control output tokens
             if cached_context:
                 cache_display_name = hashlib.sha256(cached_context.encode()).hexdigest()
-                cached_content = genai.CachedContent.get(f"cachedContents/{cache_display_name}")
-                if not cached_content:
-                    cached_content = genai.CachedContent.create(
-                        model=model_name,
-                        display_name=cache_display_name,
-                        contents=[cached_context],
+                try:
+                    cached_content_obj = client.caches.get(name=f"cachedContents/{cache_display_name}")
+                    logger.info(f"Retrieved cached content: {cached_content_obj.name}")
+                except google_exceptions.NotFound:
+                    logger.info(f"Cached content '{cache_display_name}' not found. Creating new cache entry.")
+                    cached_content_obj = client.caches.create(
+                        config=types.CreateCachedContentConfig(
+                            model=model_name,
+                            display_name=cache_display_name,
+                            contents=[types.Content(parts=[types.Part.from_text(cached_context)])],
+                            ttl="3600s" # Cache for 1 hour, adjust as needed
+                        )
                     )
-                response_stream = cached_content.generate_content(
+                    logger.info(f"Created new cached content: {cached_content_obj.name}")
+
+                response_stream = client.models.generate_content_stream(
+                    model=model_name,
                     contents=contents,
-                    generation_config=full_config,
-                    safety_settings=safety_settings,
-                    stream=True
+                    config=full_config,
+                    cached_content=cached_content_obj.name # Pass the cached content name
                 )
             else:
                 response_stream = client.models.generate_content_stream(
