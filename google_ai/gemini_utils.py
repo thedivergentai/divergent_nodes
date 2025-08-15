@@ -261,6 +261,9 @@ def generate_content(
                 generated_text = ""
                 if candidates and len(candidates) > 0 and getattr(candidates[0], 'content', None):
                     content_parts = getattr(candidates[0].content, 'parts', [])
+                    # Ensure content_parts is a list, even if getattr returned None
+                    if content_parts is None:
+                        content_parts = []
                     generated_text = "".join(getattr(part, 'text', '') for part in content_parts if hasattr(part, 'text'))
 
                 if finish_reason_str == 'SAFETY':

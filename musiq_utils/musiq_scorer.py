@@ -1,8 +1,12 @@
+import os
 import tensorflow as tf
 import tensorflow_hub as hub
 from PIL import Image
 import numpy as np
 import logging
+
+# Suppress TensorFlow logging messages and warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # Configure logging for this module
 logger = logging.getLogger(__name__)
