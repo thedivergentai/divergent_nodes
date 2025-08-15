@@ -10,7 +10,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # Configure logging for this module
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO) # Set default logging level for this module
+# Removed logger.setLevel(logging.INFO) to allow global logging configuration to apply
 
 # Global cache for MusiQ models to avoid re-downloading
 _musiq_model_cache = {}

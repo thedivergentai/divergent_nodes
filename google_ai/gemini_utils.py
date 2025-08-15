@@ -17,9 +17,15 @@ from google.api_core import exceptions as google_exceptions
 # Import the new config manager
 from ..shared_utils.config_manager import load_config
 from ..shared_utils.image_conversion import tensor_to_pil # Assuming this utility is stable
+from ..shared_utils.logging_utils import SUCCESS_HIGHLIGHT # Import SUCCESS_HIGHLIGHT
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
+
+# Suppress verbose HTTP request logging from google-api-core
+logging.getLogger('google.api_core.grpc_helpers').setLevel(logging.WARNING)
+logging.getLogger('google.api_core.bidi').setLevel(logging.WARNING)
+
 
 # --- Type Aliases ---
 PilImageT: TypeAlias = Image.Image
