@@ -20,6 +20,7 @@ from comfy.cli_args import args
 from ..shared_utils.logging_utils import SUCCESS_HIGHLIGHT
 from ..shared_utils.text_encoding_utils import ensure_utf8_friendly
 from ..shared_utils.console_io import sanitize_filename # Import from shared_utils
+from ..shared_utils.image_conversion import tensor_to_pil # Add the missing import
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
