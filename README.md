@@ -105,8 +105,12 @@ Connects to the Google Gemini API to generate text based on a prompt and optiona
 *   `top_k` (INT): Top-K sampling threshold (consider probability of token). (>= 1)
 *   `max_output_tokens` (INT): Maximum number of tokens to generate in the response. (>= 1)
 *   `safety_harassment` / `safety_hate_speech` / `safety_sexually_explicit` / `safety_dangerous_content` (COMBO): Safety thresholds for different safety categories.
-*   `extended_thinking` (BOOLEAN): If true, the model may use extended thinking (internal reasoning) if supported.
-*   `thinking_token_budget` (INT): Token budget for model's thinking process. -1 for automatic, 0 to disable.
+*   `extended_thinking` (BOOLEAN, default: `True`): If `True`, the model may use extended thinking (internal reasoning) if supported. When `False`, thinking mode is explicitly disabled.
+*   `thinking_token_budget` (INT, default: `-1`): Token budget for the model's thinking process.
+    *   `-1`: Automatic (model determines budget).
+    *   `0`: Disables thinking (equivalent to `extended_thinking: False`).
+    *   `>0`: Sets a specific token budget for thoughts.
+    *   **Important:** If `extended_thinking` is `True` and `thinking_token_budget` is `>0`, the `max_output_tokens` will be reduced by this budget to ensure the generated response adheres to the remaining token limit. For example, if `max_output_tokens` is 2048 and `thinking_token_budget` is 500, the effective `max_output_tokens` for the *response* will be 1548. If `thinking_token_budget` is `-1`, the user must manually account for thought tokens within the `max_output_tokens` setting.
 
 **Outputs:**
 

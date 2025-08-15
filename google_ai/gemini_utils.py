@@ -150,21 +150,16 @@ def prepare_generation_config(temperature: float, top_p: float, top_k: int,
 
 def prepare_thinking_config(extended_thinking: bool, thinking_budget: int) -> Optional[types.ThinkingConfig]:
     """
-    Prepares the thinking configuration dictionary for the Gemini API.
-    Returns None if extended thinking is not enabled or budget is 0.
+    Prepares the thinking configuration object for the Gemini API.
+    Returns None if extended thinking is not enabled.
     """
-    if not extended_thinking and thinking_budget == 0:
-        logger.debug("Thinking config disabled.")
+    if not extended_thinking:
+        logger.debug("Extended thinking is disabled. Returning None for thinking config.")
         return None
 
-    config = {}
-    if extended_thinking:
-        config["include_thoughts"] = True # 'include_thoughts' is the API parameter
+    config = {"include_thoughts": True} # Always include thoughts if extended_thinking is True
     if thinking_budget != -1: # -1 means automatic, so only set if a specific budget is provided
         config["thinking_budget"] = thinking_budget
-
-    if not config: # If no specific thinking settings are enabled, return None
-        return None
 
     thinking_config = types.ThinkingConfig(**config)
     logger.debug(f"Prepared thinking config: {thinking_config}")

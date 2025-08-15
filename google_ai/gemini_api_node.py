@@ -208,6 +208,12 @@ class GeminiNode:
                 extended_thinking, thinking_token_budget
             )
 
+            # Adjust max_output_tokens if extended thinking is enabled and a specific budget is set
+            adjusted_max_output_tokens = max_output_tokens
+            if extended_thinking and thinking_token_budget != -1:
+                adjusted_max_output_tokens = max(1, max_output_tokens - thinking_token_budget)
+                logger.info(f"Adjusting max_output_tokens from {max_output_tokens} to {adjusted_max_output_tokens} (after reserving {thinking_token_budget} for thoughts).")
+
             # Check if model supports thinking features if extended_thinking is True
             if extended_thinking and thinking_config:
                 try:
@@ -227,7 +233,7 @@ class GeminiNode:
                     thinking_config = None
 
             generation_config = prepare_generation_config(
-                temperature, top_p, top_k, max_output_tokens, thinking_config # Pass thinking_config here
+                temperature, top_p, top_k, adjusted_max_output_tokens, thinking_config # Pass adjusted_max_output_tokens here
             )
 
             # Ensure prompt is UTF-8 friendly
