@@ -157,6 +157,7 @@ class GeminiNode:
                  "retry_delay_seconds": ("INT", {"default": 5, "min": 1, "max": 60, "step": 1, "tooltip": "Delay in seconds between retries."}),
                  "extended_thinking": ("BOOLEAN", {"default": True, "tooltip": "If true, the model may use extended thinking (internal reasoning) if supported."}),
                  "thinking_token_budget": ("INT", {"default": -1, "min": -1, "max": 8192, "step": 1, "tooltip": "Token budget for model's thinking process. -1 for automatic, 0 to disable."}),
+                 "cached_context": ("STRING", {"multiline": True, "default": "", "tooltip": "Optional: The text context to cache. If provided, this context will be cached and reused for subsequent requests."}),
             }
         }
 
@@ -179,6 +180,7 @@ class GeminiNode:
         retry_delay_seconds: int = 5,
         extended_thinking: bool = True, # Renamed parameter, default True
         thinking_token_budget: int = -1,
+        cached_context: str = "",
     ) -> Tuple[str, int, int, int]: # Updated return signature
         """
         Executes the Gemini API call for text generation by orchestrating helper methods.
@@ -215,22 +217,21 @@ class GeminiNode:
                 logger.info(f"Adjusting max_output_tokens from {max_output_tokens} to {adjusted_max_output_tokens} (after reserving {thinking_token_budget} for thoughts).")
 
             # Check if model supports thinking features if extended_thinking is True
-            if extended_thinking and thinking_config:
+            # If not supported, explicitly set include_thoughts to False within the existing thinking_config
+            if extended_thinking and thinking_config.include_thoughts: # Only check if thinking is intended to be enabled
                 try:
                     client = genai.Client(api_key=api_key)
                     model_info = client.models.get(model) # Use 'model' parameter directly
                     # Check if 'thinking' is in supported_actions or if model is known to support it
                     # This is a heuristic; a more robust check might involve specific API capabilities
                     if "thinking" not in model_info.supported_actions and "generateContent" in model_info.supported_actions:
-                        # If 'thinking' is not explicitly listed but generateContent is,
-                        # it might still work, but we'll warn and disable for safety.
                         logger.warning("Model '{}' does not explicitly list 'thinking' in supported actions. Disabling extended thinking for this request.".format(str(model)))
-                        thinking_config = None
+                        thinking_config.include_thoughts = False # Modify the existing object
                 except Exception as e:
                     # Ensure model_name is safely converted to string for logging
                     safe_model_name = str(model) if isinstance(model, str) else "UNKNOWN_MODEL"
                     logger.warning("Could not verify thinking support for model '{}': {}. Disabling extended thinking for this request.".format(safe_model_name, e), exc_info=True)
-                    thinking_config = None
+                    thinking_config.include_thoughts = False # Modify the existing object
 
             generation_config = prepare_generation_config(
                 temperature, top_p, top_k, adjusted_max_output_tokens, thinking_config # Pass adjusted_max_output_tokens here
@@ -290,7 +291,8 @@ class GeminiNode:
                 safety_settings=safety_settings,
                 thinking_config=thinking_config, # Pass thinking_config here
                 max_retries=max_retries,
-                retry_delay_seconds=retry_delay_seconds
+                retry_delay_seconds=retry_delay_seconds,
+                cached_context=cached_context,
             )
             # Prioritize showing the API block error message if it exists
             final_output = response_error_msg if response_error_msg else generated_text

@@ -7,6 +7,7 @@ Uses the recommended google-genai library and follows GitHub README examples.
 import os
 import logging
 import io
+import hashlib
 from typing import Optional, Dict, Any, Tuple, List, Union, TypeAlias
 from PIL import Image
 import torch
@@ -148,17 +149,17 @@ def prepare_generation_config(temperature: float, top_p: float, top_k: int,
         thinking_config=thinking_config # Pass thinking_config here
     )
 
-def prepare_thinking_config(extended_thinking: bool, thinking_budget: int) -> Optional[types.ThinkingConfig]:
+def prepare_thinking_config(extended_thinking: bool, thinking_budget: int) -> types.ThinkingConfig:
     """
     Prepares the thinking configuration object for the Gemini API.
-    Returns None if extended thinking is not enabled.
+    Always returns a types.ThinkingConfig object, with include_thoughts=False if thinking is disabled.
     """
-    if not extended_thinking:
-        logger.debug("Extended thinking is disabled. Returning None for thinking config.")
-        return None
+    if not extended_thinking or thinking_budget == 0:
+        logger.debug("Extended thinking is disabled or thinking_budget is 0. Setting include_thoughts to False.")
+        return types.ThinkingConfig(include_thoughts=False)
 
-    config = {"include_thoughts": True} # Always include thoughts if extended_thinking is True
-    if thinking_budget != -1: # -1 means automatic, so only set if a specific budget is provided
+    config = {"include_thoughts": True}
+    if thinking_budget != -1:
         config["thinking_budget"] = thinking_budget
 
     thinking_config = types.ThinkingConfig(**config)
@@ -187,17 +188,18 @@ def generate_content(
     contents: List[Any],
     generation_config: Optional[types.GenerateContentConfig] = None,
     safety_settings: Optional[List[types.SafetySetting]] = None,
-    thinking_config: Optional[types.ThinkingConfig] = None, # New parameter
+    thinking_config: Optional[types.ThinkingConfig] = None,
     max_retries: int = 3,
-    retry_delay_seconds: int = 5
-) -> Tuple[str, Optional[str], int, int, int]: # Added token counts to return signature
+    retry_delay_seconds: int = 5,
+    cached_context: str = ""
+) -> Tuple[str, Optional[str], int, int, int]:
     """
     Generates content using genai.Client based on a list of content parts,
     with optional generation config and safety settings, and retry logic.
+    This function now uses streaming to enforce max_output_tokens on the response text.
     Returns a tuple: (generated_text_or_error, api_block_error_msg, prompt_tokens, response_tokens, thoughts_tokens).
     """
     logger.info(f"Generating content for model: {model_name} with {max_retries} retries.")
-    final_output = ""
     response_error_msg: Optional[str] = None
     current_retry = 0
     prompt_tokens = 0
@@ -211,97 +213,141 @@ def generate_content(
 
     while current_retry <= max_retries:
         try:
-            # Instantiate client with the provided API key
             client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
             logger.debug("genai.Client instantiated for content generation with v1alpha API.")
 
-            # Create the single GenerateContentConfig object
             full_config = types.GenerateContentConfig()
             if generation_config:
                 full_config.temperature = generation_config.temperature
                 full_config.top_p = generation_config.top_p
                 full_config.top_k = generation_config.top_k
+                # max_output_tokens is now handled client-side with streaming
+                # We still pass it to the API as a fallback/hint, but the client-side logic will enforce it.
                 full_config.max_output_tokens = generation_config.max_output_tokens
             if safety_settings:
                 full_config.safety_settings = safety_settings
-            if thinking_config: # Add thinking_config if provided
+            if thinking_config:
                 full_config.thinking_config = thinking_config
 
             logger.debug(f"Sending request to Gemini API model '{model_name}' (Attempt {current_retry + 1}/{max_retries + 1})...")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=full_config,
-            )
+            
+            # Use streaming to control output tokens
+            if cached_context:
+                cache_display_name = hashlib.sha256(cached_context.encode()).hexdigest()
+                cached_content = genai.CachedContent.get(f"cachedContents/{cache_display_name}")
+                if not cached_content:
+                    cached_content = genai.CachedContent.create(
+                        model=model_name,
+                        display_name=cache_display_name,
+                        contents=[cached_context],
+                    )
+                response_stream = cached_content.generate_content(
+                    contents=contents,
+                    generation_config=full_config,
+                    safety_settings=safety_settings,
+                    stream=True
+                )
+            else:
+                response_stream = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=full_config,
+                    stream=True
+                )
 
-            # Process Response
-            generated_text: str = ""
-            try:
-                # --- Start of Bulletproof Response Parsing ---
-                # The structure of the 'response' can vary, especially if the prompt is
-                # blocked. We must access attributes defensively to prevent intermittent errors.
-                prompt_feedback = getattr(response, 'prompt_feedback', None)
-                candidates = getattr(response, 'candidates', None)
-                usage_metadata = getattr(response, 'usage_metadata', None) # Get usage metadata
+            full_response_text_list = []
+            current_response_tokens = 0
+            
+            # Create a dummy model object to count tokens client-side
+            # This is a lightweight way to access the tokenizer for accurate token counting
+            # Note: This might not be perfectly aligned with API's internal tokenizer, but it's the best client-side approximation.
+            token_counter_model = genai.GenerativeModel(model_name=model_name)
 
-                # Extract token counts
-                if usage_metadata:
-                    prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
-                    response_tokens = getattr(usage_metadata, 'response_token_count', 0)
-                    thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0)
-                    logger.info(f"Token Usage: Prompt={prompt_tokens}, Response={response_tokens}, Thoughts={thoughts_tokens}")
+            final_response_object = None # To store the last chunk which contains usage_metadata
 
-                # Safely get the finish reason from either a block or a successful response.
-                finish_reason_str = "UNKNOWN"
-                if prompt_feedback and hasattr(prompt_feedback, 'block_reason') and prompt_feedback.block_reason:
-                    finish_reason_str = getattr(prompt_feedback.block_reason, 'name', 'OTHER')
-                elif candidates and len(candidates) > 0 and hasattr(candidates[0], 'finish_reason'):
-                    finish_reason_str = getattr(candidates[0].finish_reason, 'name', 'STOP')
+            for chunk in response_stream:
+                final_response_object = chunk # Keep track of the last chunk for usage_metadata
+                
+                if chunk.text:
+                    # Count tokens of the current chunk's text
+                    chunk_token_count = token_counter_model.count_tokens(chunk.text).total_tokens
+                    
+                    # Check if adding this chunk exceeds the max_output_tokens
+                    if generation_config and (current_response_tokens + chunk_token_count > generation_config.max_output_tokens):
+                        # Truncate the current chunk's text if it exceeds the limit
+                        remaining_tokens = generation_config.max_output_tokens - current_response_tokens
+                        if remaining_tokens > 0:
+                            # This is a rough truncation. A more precise one would involve re-tokenizing and slicing.
+                            # For now, we'll just cut off characters.
+                            truncated_text = chunk.text[:remaining_tokens]
+                            full_response_text_list.append(truncated_text)
+                            current_response_tokens += remaining_tokens
+                        logger.warning(f"Max output tokens ({generation_config.max_output_tokens}) reached. Truncating response.")
+                        break # Stop processing further chunks
+                    else:
+                        full_response_text_list.append(chunk.text)
+                        current_response_tokens += chunk_token_count
+            
+            generated_text = "".join(full_response_text_list)
 
-                # This is the definitive fix. It ensures 'ratings' is ALWAYS a list.
-                ratings = (getattr(prompt_feedback, 'safety_ratings', []) if prompt_feedback else []) or []
-                ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings if r])
-                # --- End of Bulletproof Response Parsing ---
-
-                # Extract the text content from the first candidate, if it exists.
-                generated_text = ""
-                if candidates and len(candidates) > 0 and getattr(candidates[0], 'content', None):
-                    content_parts = getattr(candidates[0].content, 'parts', [])
-                    # Ensure content_parts is a list, even if getattr returned None
-                    if content_parts is None:
-                        content_parts = []
-                    generated_text = "".join(getattr(part, 'text', '') for part in content_parts if hasattr(part, 'text'))
-
-                if finish_reason_str == 'SAFETY':
-                    response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
-                    logger.error(response_error_msg)
-                    return response_error_msg, response_error_msg, prompt_tokens, response_tokens, thoughts_tokens
-                elif finish_reason_str == 'RECITATION':
-                    response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped for potential recitation."
-                    logger.error(response_error_msg)
-                    return response_error_msg, response_error_msg, prompt_tokens, response_tokens, thoughts_tokens
-                elif finish_reason_str == 'MAX_TOKENS':
-                    logger.warning("Generation stopped: Reached max_output_tokens limit.")
-                elif finish_reason_str not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', 'OTHER', 'UNKNOWN', None]:
-                    logger.warning(f"Generation finished with reason: {finish_reason_str}")
-
+            # After the stream, extract final token counts from the last chunk's usage_metadata
+            if final_response_object and hasattr(final_response_object, 'usage_metadata'):
+                usage_metadata = final_response_object.usage_metadata
+                prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
+                # Use the client-side calculated response_tokens for accuracy based on truncation
+                # response_tokens = getattr(usage_metadata, 'response_token_count', 0) # This would be the API's count before truncation
+                thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0)
+                logger.info(f"Final Token Usage: Prompt={prompt_tokens}, Client-Response={current_response_tokens}, API-Thoughts={thoughts_tokens}")
+            else:
+                logger.warning("Could not retrieve usage_metadata from the streamed response.")
+                # Fallback: estimate response tokens from generated_text if metadata is missing
                 if generated_text:
-                    logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_str}")
-                    return generated_text, None, prompt_tokens, response_tokens, thoughts_tokens # Success, return immediately
-                else:
-                    status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_str}. Retrying..."
-                    logger.warning(status_msg)
-                    raise RuntimeError(status_msg) # Raise to trigger retry logic
+                    response_tokens = token_counter_model.count_tokens(generated_text).total_tokens
+                logger.info(f"Estimated Token Usage (no metadata): Client-Response={response_tokens}")
 
-            except (IndexError, AttributeError, TypeError) as e:
-                error_msg = f"{ERROR_PREFIX} Error parsing API response: {type(e).__name__}: {e}. Retrying..."
-                logger.error(error_msg, exc_info=True)
-                raise RuntimeError(error_msg) # Raise to trigger retry logic
+
+            # Check for safety blocks or other finish reasons from the last chunk
+            finish_reason_str = "UNKNOWN"
+            prompt_feedback = None
+            if final_response_object and hasattr(final_response_object, 'candidates') and final_response_object.candidates:
+                candidate = final_response_object.candidates[0]
+                if hasattr(candidate, 'finish_reason'):
+                    finish_reason_str = getattr(candidate.finish_reason, 'name', 'STOP')
+                if hasattr(final_response_object, 'prompt_feedback'):
+                    prompt_feedback = final_response_object.prompt_feedback
+
+            if prompt_feedback and hasattr(prompt_feedback, 'block_reason') and prompt_feedback.block_reason:
+                finish_reason_str = getattr(prompt_feedback.block_reason, 'name', 'OTHER')
+            
+            ratings = (getattr(prompt_feedback, 'safety_ratings', []) if prompt_feedback else []) or []
+            ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings if r])
+
+            if finish_reason_str == 'SAFETY':
+                response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped by safety settings. Ratings: [{ratings_str}]"
+                logger.error(response_error_msg)
+                return response_error_msg, response_error_msg, prompt_tokens, current_response_tokens, thoughts_tokens
+            elif finish_reason_str == 'RECITATION':
+                response_error_msg = f"{ERROR_PREFIX} Blocked: Response stopped for potential recitation."
+                logger.error(response_error_msg)
+                return response_error_msg, response_error_msg, prompt_tokens, current_response_tokens, thoughts_tokens
+            elif finish_reason_str == 'MAX_TOKENS':
+                logger.warning("Generation stopped by API: Reached max_output_tokens limit.")
+                # This case should be less frequent now due to client-side truncation,
+                # but can still happen if API's internal tokenization differs or for other reasons.
+            elif finish_reason_str not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', 'OTHER', 'UNKNOWN', None]:
+                logger.warning(f"Generation finished with reason: {finish_reason_str}")
+
+            if generated_text:
+                logger.info(f"Successfully generated text (length: {len(generated_text)}). Finish Reason: {finish_reason_str}")
+                return generated_text, None, prompt_tokens, current_response_tokens, thoughts_tokens # Success, return immediately
+            else:
+                status_msg = f"Response received with parts, but no text extracted. Finish Reason: {finish_reason_str}. Retrying..."
+                logger.warning(status_msg)
+                raise RuntimeError(status_msg) # Raise to trigger retry logic
 
         except google_exceptions.GoogleAPIError as e:
             error_msg = f"{ERROR_PREFIX} Google API Error - Status: {getattr(e, 'code', 'N/A')}, Message: {e}. Retrying..."
             logger.error(error_msg, exc_info=True)
-            # This is a transient issue, retry
             pass # Allow loop to continue for retry
 
         except Exception as e:
@@ -310,7 +356,6 @@ def generate_content(
             elif hasattr(e, 'details') and callable(e.details) and e.details(): error_details = e.details()
             error_msg = f"{ERROR_PREFIX} Gemini Generation Error ({type(e).__name__}): {error_details}. Retrying..."
             logger.error(error_msg, exc_info=True)
-            # This is a transient issue, retry
             pass # Allow loop to continue for retry
 
         current_retry += 1
