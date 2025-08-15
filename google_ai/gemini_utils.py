@@ -150,16 +150,20 @@ def prepare_generation_config(temperature: float, top_p: float, top_k: int,
         thinking_config=thinking_config # Pass thinking_config here
     )
 
-def prepare_thinking_config(extended_thinking: bool, thinking_budget: int) -> types.ThinkingConfig:
+def prepare_thinking_config(extended_thinking: bool, thinking_budget: int, output_thoughts: bool) -> types.ThinkingConfig:
     """
     Prepares the thinking configuration object for the Gemini API.
-    Always returns a types.ThinkingConfig object, with include_thoughts=False if thinking is disabled.
+    Controls whether the model performs internal thinking and whether those thoughts are included in the API response.
     """
-    if not extended_thinking or thinking_budget == 0:
-        logger.debug("Extended thinking is disabled or thinking_budget is 0. Setting include_thoughts to False.")
-        return types.ThinkingConfig(include_thoughts=False)
+    # 'include_thoughts' in the API request should be True only if both extended_thinking is True
+    # AND output_thoughts is True. Otherwise, it should be False to prevent thoughts from being returned by the API.
+    include_thoughts_in_api_request = extended_thinking and output_thoughts
 
-    config = {"include_thoughts": True}
+    config = {"include_thoughts": include_thoughts_in_api_request}
+    
+    # If thinking_budget is -1, the model determines the budget.
+    # If thinking_budget is 0, it implies no thinking, so include_thoughts should be False (handled above).
+    # If thinking_budget is > 0, it sets a specific budget.
     if thinking_budget != -1:
         config["thinking_budget"] = thinking_budget
 
@@ -270,7 +274,8 @@ def generate_content(
                 
                 if hasattr(chunk, 'candidates') and chunk.candidates:
                     for part in chunk.candidates[0].content.parts:
-                        if part.text:
+                        # Only add text parts that are NOT thoughts to the final response
+                        if part.text and not part.thought:
                             # Count tokens of the current chunk's text
                             chunk_token_count = token_counter_model.count_tokens(part.text).total_tokens
                             
@@ -290,7 +295,7 @@ def generate_content(
                                 full_response_text_list.append(part.text)
                                 current_response_tokens += chunk_token_count
                         elif part.thought:
-                            logger.debug("Received thought part (content suppressed).") # Log thought parts, but don't add to response
+                            logger.debug("Received thought part (content suppressed from output).") # Log thought parts, but don't add to response
                         else:
                             logger.warning(f"Received part with no text or thought. Type: {type(part)}, Attributes: {dir(part)}")
                 else:

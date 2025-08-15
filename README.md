@@ -111,6 +111,7 @@ Connects to the Google Gemini API to generate text based on a prompt and optiona
     *   `0`: Disables thinking (equivalent to `extended_thinking: False`).
     *   `>0`: Sets a specific token budget for thoughts.
     *   **Important:** If `extended_thinking` is `True` and `thinking_token_budget` is `>0`, the node will automatically reduce the `max_output_tokens` provided to the API by this budget. This ensures the generated response adheres to the remaining token limit, effectively reserving tokens for thoughts. For example, if `max_output_tokens` is 2048 and `thinking_token_budget` is 500, the effective `max_output_tokens` for the *response* will be 1548.
+*   `output_thoughts` (BOOLEAN, default: `False`): If `True`, the model's internal thought process will be included in the output text. Otherwise, thoughts are suppressed from the output.
 *   `cached_context` (STRING, default: `""`): Optional: The text context to cache. If provided, this context will be cached and reused for subsequent requests. The cache name is automatically generated from a hash of the context.
 
 **Outputs:**

@@ -157,6 +157,7 @@ class GeminiNode:
                  "retry_delay_seconds": ("INT", {"default": 5, "min": 1, "max": 60, "step": 1, "tooltip": "Delay in seconds between retries."}),
                  "extended_thinking": ("BOOLEAN", {"default": True, "tooltip": "If true, the model may use extended thinking (internal reasoning) if supported."}),
                  "thinking_token_budget": ("INT", {"default": -1, "min": -1, "max": 8192, "step": 1, "tooltip": "Token budget for model's thinking process. -1 for automatic, 0 to disable."}),
+                 "output_thoughts": ("BOOLEAN", {"default": False, "tooltip": "If true, the model's internal thought process will be included in the output text. Otherwise, thoughts are suppressed."}),
                  "cached_context": ("STRING", {"multiline": True, "default": "", "tooltip": "Optional: The text context to cache. If provided, this context will be cached and reused for subsequent requests."}),
             }
         }
@@ -178,8 +179,9 @@ class GeminiNode:
         api_key_override: str = "",
         max_retries: int = 3,
         retry_delay_seconds: int = 5,
-        extended_thinking: bool = True, # Renamed parameter, default True
+        extended_thinking: bool = True,
         thinking_token_budget: int = -1,
+        output_thoughts: bool = False, # New parameter
         cached_context: str = "",
     ) -> Tuple[str]: # Only text output
         """
@@ -208,10 +210,11 @@ class GeminiNode:
 
             # Prepare thinking config
             thinking_config = prepare_thinking_config(
-                extended_thinking, thinking_token_budget
+                extended_thinking, thinking_token_budget, output_thoughts # Pass output_thoughts here
             )
 
             # Adjust max_output_tokens if extended thinking is enabled and a specific budget is set
+            # This adjustment is only for the API's max_output_tokens, not for client-side filtering of thoughts.
             adjusted_max_output_tokens = max_output_tokens
             if extended_thinking and thinking_token_budget != -1:
                 adjusted_max_output_tokens = max(1, max_output_tokens - thinking_token_budget)
@@ -280,6 +283,7 @@ class GeminiNode:
                 max_retries=max_retries,
                 retry_delay_seconds=retry_delay_seconds,
                 cached_context=cached_context,
+                output_thoughts=output_thoughts, # Pass output_thoughts here
             )
             # Prioritize showing the API block error message if it exists
             final_output = response_error_msg if response_error_msg else generated_text
