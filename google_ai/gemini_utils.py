@@ -20,9 +20,6 @@ from ..shared_utils.image_conversion import tensor_to_pil # Assuming this utilit
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
-# Ensure handler is configured if root logger isn't set up
-if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # --- Type Aliases ---
 PilImageT: TypeAlias = Image.Image

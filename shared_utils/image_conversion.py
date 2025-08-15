@@ -11,9 +11,6 @@ import logging
 PilImageT: TypeAlias = Image.Image
 
 logger = logging.getLogger(__name__)
-# Ensure handler is configured if root logger isn't set up
-if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # Note: safe_print import is removed as it's not used in this file.
 # If needed later, re-add the try-except block.

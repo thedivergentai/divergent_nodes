@@ -35,9 +35,6 @@ from google.genai import Client
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
-# Ensure handler is configured if root logger isn't set up
-if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # --- ComfyUI Node Definition ---
 

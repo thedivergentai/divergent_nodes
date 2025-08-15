@@ -7,6 +7,10 @@ from .xy_plotting.lora_strength_plot_node import LoraStrengthXYPlot
 from .koboldcpp.api_connector_node import KoboldCppApiNode
 from .image_utils.save_image_enhanced_node import SaveImageEnhancedNode
 from .musiq_utils.musiq_node import MusiQNode
+from .shared_utils.logging_utils import setup_node_logging # Import the logging setup function
+
+# Call the logging setup function once at the entry point
+setup_node_logging()
 
 # Define the master NODE_CLASS_MAPPINGS
 NODE_CLASS_MAPPINGS = {

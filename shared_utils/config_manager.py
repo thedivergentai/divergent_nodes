@@ -4,8 +4,6 @@ import logging
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
-if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # Assuming config.json is in the source/ directory, relative to shared_utils/
 CONFIG_FILE_PATH = os.path.join(os.path.dirname(__file__), "..", "config.json")

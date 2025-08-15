@@ -17,17 +17,11 @@ try:
 except ImportError:
     # Fallback for direct execution or different structure
     logging.warning("Could not perform relative import for shared_utils, attempting direct import.")
-    # Ensure logger is configured before first use if fallback occurs
-    if not logging.getLogger().hasHandlers():
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     from shared_utils.image_conversion import tensor_to_pil, pil_to_base64
     from shared_utils.logging_utils import SUCCESS_HIGHLIGHT # Import custom log level
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
-# Ensure handler is configured if root logger isn't set up
-if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # --- Basic API Connector Node ---
 
