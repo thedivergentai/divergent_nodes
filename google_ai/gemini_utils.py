@@ -248,11 +248,10 @@ def generate_content(
                     stream=True
                 )
             else:
-                response_stream = client.models.generate_content(
+                response_stream = client.models.generate_content_stream(
                     model=model_name,
                     contents=contents,
                     config=full_config,
-                    stream=True
                 )
 
             full_response_text_list = []
