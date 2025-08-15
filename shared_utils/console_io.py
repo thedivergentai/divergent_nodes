@@ -3,14 +3,12 @@ Provides utility functions for safe console input/output operations,
 primarily handling potential encoding issues.
 """
 import sys
+import re # Import re for regex operations
 from typing import Optional, TextIO
 import logging
 
 # Setup logger for this utility module
 logger = logging.getLogger(__name__)
-# Ensure handler is configured if root logger isn't set up
-if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=logging.INFO, format='[Divergent Nodes] %(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
 # --- Safe Print Function ---
@@ -50,3 +48,26 @@ def safe_print(text: str, file: Optional[TextIO] = None) -> None:
     except Exception as e:
         # Catch other potential print errors
         logger.error(f"safe_print encountered an unexpected error: {e}", exc_info=True)
+
+def sanitize_filename(filename: str, max_length: int = 200) -> str:
+    """
+    Sanitizes a string to be safe for use as a filename.
+    Removes invalid characters and truncates to a maximum length.
+    """
+    if not isinstance(filename, str):
+        logger.warning(f"sanitize_filename received non-string input: {type(filename)}. Converting to string.")
+        filename = str(filename)
+
+    # Replace invalid characters with an underscore
+    invalid_chars = r'[<>:"/\\|?*\x00-\x1f]' # Windows invalid chars + control chars
+    sanitized = re.sub(invalid_chars, '_', filename)
+
+    # Remove leading/trailing spaces and periods (invalid on Windows)
+    sanitized = sanitized.strip(' .')
+
+    # Truncate if too long
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length]
+        logger.warning(f"Filename truncated to {max_length} characters: {sanitized}...")
+
+    return sanitized

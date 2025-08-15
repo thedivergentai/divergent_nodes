@@ -18,57 +18,11 @@ from comfy.cli_args import args
 
 # Import custom log level
 from ..shared_utils.logging_utils import SUCCESS_HIGHLIGHT
+from ..shared_utils.text_encoding_utils import ensure_utf8_friendly
+from ..shared_utils.console_io import sanitize_filename # Import from shared_utils
 
-# --- Utility function copied from source/shared_utils/text_encoding_utils.py ---
-# This is copied here to ensure it's available within the custom node environment
-# without complex import path issues.
+# Setup logger for this module
 logger = logging.getLogger(__name__)
-
-def ensure_utf8_friendly(text_input: str) -> str:
-    """
-    Ensures the input string is UTF-8 friendly by encoding and then
-    decoding with error replacement.
-    Args:
-        text_input: The string to process.
-    Returns:
-        A UTF-8 friendly version of the string.
-    """
-    if not isinstance(text_input, str):
-        logger.warning(f"ensure_utf8_friendly received non-string input: {type(text_input)}. Converting to string.")
-        text_input = str(text_input)
-    try:
-        # Encode to bytes using UTF-8, replacing errors, then decode back to string
-        return text_input.encode('utf-8', errors='replace').decode('utf-8')
-    except Exception as e:
-        logger.error(f"Error during UTF-8 conversion for input '{text_input[:100]}...': {e}", exc_info=True)
-        # Fallback: return original string if conversion fails catastrophically (should be rare with 'replace')
-        return text_input
-
-def sanitize_filename(filename: str, max_length: int = 200) -> str:
-    """
-    Sanitizes a string to be safe for use as a filename.
-    Removes invalid characters and truncates to a maximum length.
-    """
-    if not isinstance(filename, str):
-        logger.warning(f"sanitize_filename received non-string input: {type(filename)}. Converting to string.")
-        filename = str(filename)
-
-    # Replace invalid characters with an underscore
-    invalid_chars = r'[<>:"/\\|?*\x00-\x1f]' # Windows invalid chars + control chars
-    sanitized = re.sub(invalid_chars, '_', filename)
-
-    # Remove leading/trailing spaces and periods (invalid on Windows)
-    sanitized = sanitized.strip(' .')
-
-    # Truncate if too long
-    if len(sanitized) > max_length:
-        sanitized = sanitized[:max_length]
-        logger.warning(f"Filename truncated to {max_length} characters: {sanitized}...")
-
-    return sanitized
-
-# --- End of Utility functions ---
-
 
 class SaveImageEnhancedNode(ComfyNodeABC): # Inherit from ComfyNodeABC
     """
