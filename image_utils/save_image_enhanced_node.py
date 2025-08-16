@@ -109,13 +109,17 @@ class SaveImageEnhancedNode(ComfyNodeABC): # Inherit from ComfyNodeABC
             try:
                 info = PngInfo() if not args.disable_metadata else None
                 if info:
+                    metadata_dict = {}
                     if prompt is not None:
-                        # Ensure prompt metadata is UTF-8 friendly
-                        info.add_text("prompt", json.dumps(ensure_utf8_friendly(prompt)))
+                        metadata_dict["prompt"] = prompt
                     if extra_pnginfo is not None:
-                        for x in extra_pnginfo:
-                            # Ensure all extra_pnginfo values are UTF-8 friendly
-                            info.add_text(x, json.dumps(ensure_utf8_friendly(extra_pnginfo[x])))
+                        metadata_dict.update(extra_pnginfo)
+
+                    if metadata_dict:
+                        # Convert combined metadata to JSON string
+                        metadata_json = json.dumps(metadata_dict, indent=2)
+                        # Ensure the entire JSON string is UTF-8 friendly
+                        info.add_text("prompt", ensure_utf8_friendly(metadata_json))
                 
                 pil_image.save(full_image_path, pnginfo=info, compress_level=self.compress_level)
                 logger.log(SUCCESS_HIGHLIGHT, f"Image saved: {full_image_path}") # Use SUCCESS_HIGHLIGHT
