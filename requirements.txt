@@ -6,3 +6,5 @@ Pillow
 python-dotenv
 requests
 colorama
+tensorflow
+tensorflow-hub
