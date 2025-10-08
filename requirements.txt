@@ -8,3 +8,4 @@ requests
 colorama
 tensorflow
 tensorflow-hub
+google-api-core
