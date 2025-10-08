@@ -72,14 +72,14 @@ def configure_api_key(api_key_override: Optional[str] = None) -> Optional[str]:
     # 1. Check override first
     if api_key_override and api_key_override.strip():
         api_key = api_key_override.strip()
-        logger.debug(f"Using API key from override: {api_key[:4]}...") # Log first few chars
+        logger.info(f"🔑 Using API key from node override: {api_key[:4]}...") # Log first few chars
         return api_key
 
     # 2. Load config from config.json
     config = load_config()
     api_key = config.get("GOOGLE_API_KEY")
     if api_key:
-        logger.debug(f"GOOGLE_API_KEY found in config.json: {api_key[:4]}...") # Log first few chars
+        logger.info(f"🔑 Using API key from config.json: {api_key[:4]}...") # Log first few chars
         return api_key
 
     # 3. Fallback to environment variable (less preferred)

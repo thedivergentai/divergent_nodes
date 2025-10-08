@@ -84,6 +84,13 @@ class GeminiNode:
         current_time = time.time()
         if not cls._model_cache or (current_time - cls._last_cache_update > cls._CACHE_LIFETIME_SECONDS):
             logger.info("🔄 [GeminiNode] Refreshing Gemini model list cache...")
+            
+            if not api_key:
+                logger.warning("⚠️ [GeminiNode] No API key available for dynamic model fetching. Using hardcoded model list.")
+                cls._model_cache = cls.AVAILABLE_MODELS
+                cls._last_cache_update = current_time # Update cache time even if using hardcoded, to respect cache lifetime
+                return cls._model_cache
+
             try:
                 # Use genai.Client directly as it's imported from google import genai
                 client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
