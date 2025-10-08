@@ -217,18 +217,15 @@ def generate_content(
         logger.error(error_msg)
         return error_msg, error_msg, prompt_tokens, response_tokens, thoughts_tokens
 
-    # Configure the genai library globally for this request
-    genai.configure(api_key=api_key, transport='rest', http_options={'api_version': 'v1alpha'})
-    logger.debug("✅ Gemini API configured globally for content generation.")
-
     while current_retry <= max_retries:
         try:
             # Create a GenerativeModel instance with the desired model and configurations
-            # This implicitly uses the globally configured client
+            # Pass api_key directly to GenerativeModel
             model_instance = genai.GenerativeModel(
                 model_name=model_name,
                 generation_config=generation_config, # Pass generation_config directly
                 safety_settings=safety_settings,     # Pass safety_settings directly
+                api_key=api_key, # Pass API key directly
                 # thinking_config is part of generation_config in newer versions,
                 # but if it's a separate parameter, it would be passed here.
                 # For now, it's assumed to be handled within generation_config.
