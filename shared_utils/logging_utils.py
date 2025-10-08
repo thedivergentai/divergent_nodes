@@ -34,22 +34,34 @@ class ColoredFormatter(logging.Formatter):
 
     def format(self, record):
         # Get the node name from the logger name (e.g., 'source.google_ai.GeminiNode' -> 'GeminiNode')
-        # If the logger name is just 'source', use 'Divergent Nodes'
-        node_name = record.name.split('.')[-1] if '.' in record.name else "Divergent Nodes"
-        
-        # Temporarily add 'node_name' to the record so it can be used in the format string
-        record.node_name = node_name
-        
-        # Apply color and emoji to the levelname
+        # If the logger name is 'source' or a direct sub-module of 'source', use a more generic name.
+        # Otherwise, use the last part of the name.
+        if record.name == 'source':
+            node_identifier = "Divergent Nodes"
+        elif record.name.startswith('source.'):
+            # For 'source.google_ai.gemini_utils', this would be 'gemini_utils'
+            # For 'source.google_ai.gemini_api_node', this would be 'gemini_api_node'
+            node_identifier = record.name.split('.')[-1]
+        else:
+            node_identifier = record.name # Fallback for other loggers
+
+        # Apply color and emoji
         color = self.COLORS.get(record.levelname, Style.RESET_ALL)
         emoji = self.EMOJIS.get(record.levelname, "")
-        record.levelname = f"{color}{record.levelname}{Style.RESET_ALL}"
         
-        # Apply color to the message itself
-        record.msg = f"{color}{emoji} {record.msg}{Style.RESET_ALL}"
+        # Format the message with the node identifier, emoji, levelname, and original message
+        # Ensure the original message is also colored
+        formatted_message = (
+            f"{Fore.WHITE}[👽 {node_identifier}]{Style.RESET_ALL} "
+            f"{color}{emoji} {record.levelname}: {record.getMessage()}{Style.RESET_ALL}"
+        )
         
-        # Let the base formatter handle the rest of the formatting
-        return super().format(record)
+        # Add exception info if present
+        if record.exc_info:
+            # Use the base formatter to format the exception
+            formatted_message += self.formatException(record.exc_info)
+        
+        return formatted_message
 
 def setup_node_logging():
     """
