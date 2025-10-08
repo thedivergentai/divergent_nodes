@@ -217,28 +217,30 @@ def generate_content(
         logger.error(error_msg)
         return error_msg, error_msg, prompt_tokens, response_tokens, thoughts_tokens
 
+    # Configure the genai library globally for this request
+    genai.configure(api_key=api_key, transport='rest', http_options={'api_version': 'v1alpha'})
+    logger.debug("✅ Gemini API configured globally for content generation.")
+
     while current_retry <= max_retries:
         try:
-            client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
-            logger.debug("✅ Gemini Client initialized for content generation.")
-
-            full_config = types.GenerateContentConfig()
-            if generation_config:
-                full_config.temperature = generation_config.temperature
-                full_config.top_p = generation_config.top_p
-                full_config.top_k = generation_config.top_k
-                full_config.max_output_tokens = generation_config.max_output_tokens
-            if safety_settings:
-                full_config.safety_settings = safety_settings
-            if thinking_config:
-                full_config.thinking_config = thinking_config
+            # Create a GenerativeModel instance with the desired model and configurations
+            # This implicitly uses the globally configured client
+            model_instance = genai.GenerativeModel(
+                model_name=model_name,
+                generation_config=generation_config, # Pass generation_config directly
+                safety_settings=safety_settings,     # Pass safety_settings directly
+                # thinking_config is part of generation_config in newer versions,
+                # but if it's a separate parameter, it would be passed here.
+                # For now, it's assumed to be handled within generation_config.
+            )
+            logger.debug(f"✅ GenerativeModel instance created for '{model_name}'.")
 
             logger.info(f"🚀 Sending request to Gemini model '{model_name}' (Attempt {current_retry + 1}/{max_retries + 1})...")
             
-            response_stream = client.models.generate_content_stream(
-                model=model_name,
+            response_stream = model_instance.generate_content(
                 contents=contents,
-                config=full_config,
+                stream=True, # Ensure streaming is enabled
+                # config is now passed during GenerativeModel instantiation
             )
 
             full_response_text_list = []
@@ -256,7 +258,8 @@ def generate_content(
                     
                     for part in candidate_content.parts:
                         if part.text:
-                            chunk_token_count = client.models.count_tokens(model=model_name, contents=[part.text]).total_tokens
+                            # Use genai.count_tokens directly
+                            chunk_token_count = genai.count_tokens(model=model_name, contents=[part.text]).total_tokens
                             
                             if generation_config and (current_response_tokens + chunk_token_count > generation_config.max_output_tokens):
                                 logger.warning(f"⚠️ Max output tokens ({generation_config.max_output_tokens}) reached. Truncating response.")
@@ -286,7 +289,8 @@ def generate_content(
             else:
                 logger.warning("⚠️ Could not retrieve detailed token usage metadata. Estimating response tokens from generated text.")
                 if generated_text:
-                    response_tokens = client.models.count_tokens(model=model_name, contents=[generated_text]).total_tokens
+                    # Use genai.count_tokens directly
+                    response_tokens = genai.count_tokens(model=model_name, contents=[generated_text]).total_tokens
                 logger.info(f"📊 Estimated Token Usage (no metadata): Response={response_tokens}")
 
             finish_reason_str = "UNKNOWN"
