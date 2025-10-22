@@ -217,140 +217,145 @@ def generate_content(
         logger.error(error_msg)
         return error_msg, error_msg, prompt_tokens, response_tokens, thoughts_tokens
 
-    while current_retry <= max_retries:
-        try:
-            client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+    try:
+        with genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'}) as client:
             logger.debug("✅ Gemini Client initialized for content generation.")
+            while current_retry <= max_retries:
+                try:
+                    # The config parameter is passed directly to generate_content_stream
+                    # It combines generation_config, safety_settings, and thinking_config
+                    full_config = types.GenerateContentConfig()
+                    if generation_config:
+                        full_config.temperature = generation_config.temperature
+                        full_config.top_p = generation_config.top_p
+                        full_config.top_k = generation_config.top_k
+                        full_config.max_output_tokens = generation_config.max_output_tokens
+                    if safety_settings:
+                        full_config.safety_settings = safety_settings
+                    if thinking_config:
+                        full_config.thinking_config = thinking_config
 
-            # The config parameter is passed directly to generate_content_stream
-            # It combines generation_config, safety_settings, and thinking_config
-            full_config = types.GenerateContentConfig()
-            if generation_config:
-                full_config.temperature = generation_config.temperature
-                full_config.top_p = generation_config.top_p
-                full_config.top_k = generation_config.top_k
-                full_config.max_output_tokens = generation_config.max_output_tokens
-            if safety_settings:
-                full_config.safety_settings = safety_settings
-            if thinking_config:
-                full_config.thinking_config = thinking_config
-
-            logger.info(f"🚀 Sending request to Gemini model '{model_name}' (Attempt {current_retry + 1}/{max_retries + 1})...")
-            
-            response_stream = client.models.generate_content_stream(
-                model=model_name,
-                contents=contents,
-                config=full_config, # Pass the combined config here
-            )
-
-            full_response_text_list = []
-            current_response_tokens = 0
-            final_response_object = None
-
-            for chunk in response_stream:
-                final_response_object = chunk
-                
-                if hasattr(chunk, 'candidates') and chunk.candidates:
-                    candidate_content = chunk.candidates[0].content
-                    if candidate_content is None:
-                        logger.warning(f"⚠️ Candidate content is empty. This might indicate a safety block or a non-textual response. Checking feedback...")
-                        continue
+                    logger.info(f"🚀 Sending request to Gemini model '{model_name}' (Attempt {current_retry + 1}/{max_retries + 1})...")
                     
-                    for part in candidate_content.parts:
-                        if part.text:
-                            # Use client.models.count_tokens
-                            chunk_token_count = client.models.count_tokens(model=model_name, contents=[part.text]).total_tokens
+                    response_stream = client.models.generate_content_stream(
+                        model=model_name,
+                        contents=contents,
+                        config=full_config, # Pass the combined config here
+                    )
+
+                    full_response_text_list = []
+                    current_response_tokens = 0
+                    final_response_object = None
+
+                    for chunk in response_stream:
+                        final_response_object = chunk
+                        
+                        if hasattr(chunk, 'candidates') and chunk.candidates:
+                            candidate_content = chunk.candidates[0].content
+                            if candidate_content is None:
+                                logger.warning(f"⚠️ Candidate content is empty. This might indicate a safety block or a non-textual response. Checking feedback...")
+                                continue
                             
-                            if generation_config and (current_response_tokens + chunk_token_count > generation_config.max_output_tokens):
-                                logger.warning(f"⚠️ Max output tokens ({generation_config.max_output_tokens}) reached. Truncating response.")
-                                break
-                            else:
-                                full_response_text_list.append(part.text)
-                                current_response_tokens += chunk_token_count
-                        elif part.thought:
-                            logger.debug("🐛 Received internal thought from model (not added to output).")
+                            for part in candidate_content.parts:
+                                if part.text:
+                                    # Use client.models.count_tokens
+                                    chunk_token_count = client.models.count_tokens(model=model_name, contents=[part.text]).total_tokens
+                                    
+                                    if generation_config and (current_response_tokens + chunk_token_count > generation_config.max_output_tokens):
+                                        logger.warning(f"⚠️ Max output tokens ({generation_config.max_output_tokens}) reached. Truncating response.")
+                                        break
+                                    else:
+                                        full_response_text_list.append(part.text)
+                                        current_response_tokens += chunk_token_count
+                                elif part.thought:
+                                    logger.debug("🐛 Received internal thought from model (not added to output).")
+                                else:
+                                    logger.warning(f"⚠️ Received an unexpected part type with no text or thought. This chunk will be skipped.")
                         else:
-                            logger.warning(f"⚠️ Received an unexpected part type with no text or thought. This chunk will be skipped.")
-                else:
-                    logger.warning(f"⚠️ Response chunk has no candidates. This might be an empty or malformed response.")
-                
-                if generation_config and current_response_tokens >= generation_config.max_output_tokens:
-                    break
+                            logger.warning(f"⚠️ Response chunk has no candidates. This might be an empty or malformed response.")
+                        
+                        if generation_config and current_response_tokens >= generation_config.max_output_tokens:
+                            break
 
-            generated_text = "".join(full_response_text_list)
+                    generated_text = "".join(full_response_text_list)
 
-            logger.debug(f"Final response object for token extraction: {final_response_object}")
-            if final_response_object and hasattr(final_response_object, 'usage_metadata'):
-                usage_metadata = final_response_object.usage_metadata
-                prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
-                response_tokens = getattr(usage_metadata, 'response_token_count', 0)
-                thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0)
-                logger.info(f"📊 Token Usage: Prompt={prompt_tokens}, Response={response_tokens}, Thoughts={thoughts_tokens}")
-            else:
-                logger.warning("⚠️ Could not retrieve detailed token usage metadata. Estimating response tokens from generated text.")
-                if generated_text:
-                    # Use client.models.count_tokens
-                    response_tokens = client.models.count_tokens(model=model_name, contents=[generated_text]).total_tokens
-                logger.info(f"📊 Estimated Token Usage (no metadata): Response={response_tokens}")
+                    logger.debug(f"Final response object for token extraction: {final_response_object}")
+                    if final_response_object and hasattr(final_response_object, 'usage_metadata'):
+                        usage_metadata = final_response_object.usage_metadata
+                        prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
+                        response_tokens = getattr(usage_metadata, 'response_token_count', 0)
+                        thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0)
+                        logger.info(f"📊 Token Usage: Prompt={prompt_tokens}, Response={response_tokens}, Thoughts={thoughts_tokens}")
+                    else:
+                        logger.warning("⚠️ Could not retrieve detailed token usage metadata. Estimating response tokens from generated text.")
+                        if generated_text:
+                            # Use client.models.count_tokens
+                            response_tokens = client.models.count_tokens(model=model_name, contents=[generated_text]).total_tokens
+                        logger.info(f"📊 Estimated Token Usage (no metadata): Response={response_tokens}")
 
-            finish_reason_str = "UNKNOWN"
-            prompt_feedback = None
-            if final_response_object and hasattr(final_response_object, 'candidates') and final_response_object.candidates:
-                candidate = final_response_object.candidates[0]
-                if hasattr(candidate, 'finish_reason'):
-                    finish_reason_str = getattr(candidate.finish_reason, 'name', 'STOP')
-                if hasattr(final_response_object, 'prompt_feedback'):
-                    prompt_feedback = final_response_object.prompt_feedback
+                    finish_reason_str = "UNKNOWN"
+                    prompt_feedback = None
+                    if final_response_object and hasattr(final_response_object, 'candidates') and final_response_object.candidates:
+                        candidate = final_response_object.candidates[0]
+                        if hasattr(candidate, 'finish_reason'):
+                            finish_reason_str = getattr(candidate.finish_reason, 'name', 'STOP')
+                        if hasattr(final_response_object, 'prompt_feedback'):
+                            prompt_feedback = final_response_object.prompt_feedback
 
-            if prompt_feedback and hasattr(prompt_feedback, 'block_reason') and prompt_feedback.block_reason:
-                finish_reason_str = getattr(prompt_feedback.block_reason, 'name', 'OTHER')
-            
-            ratings = (getattr(prompt_feedback, 'safety_ratings', []) if prompt_feedback else []) or []
-            ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings if r])
+                    if prompt_feedback and hasattr(prompt_feedback, 'block_reason') and prompt_feedback.block_reason:
+                        finish_reason_str = getattr(prompt_feedback.block_reason, 'name', 'OTHER')
+                    
+                    ratings = (getattr(prompt_feedback, 'safety_ratings', []) if prompt_feedback else []) or []
+                    ratings_str = ', '.join([f"{getattr(r.category, 'name', 'UNK')}: {getattr(r.probability, 'name', 'UNK')}" for r in ratings if r])
 
-            if finish_reason_str == 'SAFETY':
-                response_error_msg = f"{ERROR_PREFIX} 🛑 Content Blocked: The response was stopped by safety settings. This might be due to sensitive content in your prompt or the model's output. Ratings: [{ratings_str}]. Please adjust your prompt or safety settings."
-                logger.error(response_error_msg)
-                return response_error_msg, response_error_msg, prompt_tokens, current_response_tokens, thoughts_tokens
-            elif finish_reason_str == 'RECITATION':
-                response_error_msg = f"{ERROR_PREFIX} 🚫 Content Blocked: The response was stopped due to potential recitation of copyrighted or sensitive material. Please try a different prompt."
-                logger.error(response_error_msg)
-                return response_error_msg, response_error_msg, prompt_tokens, current_response_tokens, thoughts_tokens
-            elif finish_reason_str == 'MAX_TOKENS':
-                logger.warning("⚠️ Generation stopped by API: The model reached its `max_output_tokens` limit. Consider increasing the limit or shortening your prompt.")
-            elif finish_reason_str not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', 'OTHER', 'UNKNOWN', None]:
-                logger.warning(f"⚠️ Generation finished with an unusual reason: {finish_reason_str}. The output might be incomplete.")
+                    if finish_reason_str == 'SAFETY':
+                        response_error_msg = f"{ERROR_PREFIX} 🛑 Content Blocked: The response was stopped by safety settings. This might be due to sensitive content in your prompt or the model's output. Ratings: [{ratings_str}]. Please adjust your prompt or safety settings."
+                        logger.error(response_error_msg)
+                        return response_error_msg, response_error_msg, prompt_tokens, current_response_tokens, thoughts_tokens
+                    elif finish_reason_str == 'RECITATION':
+                        response_error_msg = f"{ERROR_PREFIX} 🚫 Content Blocked: The response was stopped due to potential recitation of copyrighted or sensitive material. Please try a different prompt."
+                        logger.error(response_error_msg)
+                        return response_error_msg, response_error_msg, prompt_tokens, current_response_tokens, thoughts_tokens
+                    elif finish_reason_str == 'MAX_TOKENS':
+                        logger.warning("⚠️ Generation stopped by API: The model reached its `max_output_tokens` limit. Consider increasing the limit or shortening your prompt.")
+                    elif finish_reason_str not in ['STOP', 'UNSPECIFIED', 'FINISH_REASON_UNSPECIFIED', 'OTHER', 'UNKNOWN', None]:
+                        logger.warning(f"⚠️ Generation finished with an unusual reason: {finish_reason_str}. The output might be incomplete.")
 
-            if generated_text:
-                logger.log(SUCCESS_HIGHLIGHT, f"🎉✨ Text generation complete! (Tokens: {current_response_tokens}, Chars: {len(generated_text)}). Finish Reason: {finish_reason_str}")
-                return generated_text, None, prompt_tokens, current_response_tokens, thoughts_tokens
-            else:
-                status_msg = f"⚠️ Response received, but no text was extracted. Finish Reason: {finish_reason_str}. Retrying..."
-                logger.warning(status_msg)
-                raise RuntimeError(status_msg)
+                    if generated_text:
+                        logger.log(SUCCESS_HIGHLIGHT, f"🎉✨ Text generation complete! (Tokens: {current_response_tokens}, Chars: {len(generated_text)}). Finish Reason: {finish_reason_str}")
+                        return generated_text, None, prompt_tokens, current_response_tokens, thoughts_tokens
+                    else:
+                        status_msg = f"⚠️ Response received, but no text was extracted. Finish Reason: {finish_reason_str}. Retrying..."
+                        logger.warning(status_msg)
+                        raise RuntimeError(status_msg)
 
-        except google_exceptions.GoogleAPIError as e:
-            error_msg = f"{ERROR_PREFIX} ❌ Google API Error ({getattr(e, 'code', 'N/A')}): {e.message}. This could be an invalid API key, rate limit, or service issue. Retrying..."
-            logger.error(error_msg, exc_info=True)
-            pass
+                except google_exceptions.GoogleAPIError as e:
+                    error_msg = f"{ERROR_PREFIX} ❌ Google API Error ({getattr(e, 'code', 'N/A')}): {e.message}. This could be an invalid API key, rate limit, or service issue. Retrying..."
+                    logger.error(error_msg, exc_info=True)
+                    pass
 
-        except Exception as e:
-            error_details = str(e)
-            if hasattr(e, 'message') and e.message: error_details = e.message
-            elif hasattr(e, 'details') and callable(e.details) and e.details(): error_details = e.details()
-            error_msg = f"{ERROR_PREFIX} 💥 Unexpected Error during Gemini Generation ({type(e).__name__}): {error_details}. Please check your inputs and network connection. Retrying..."
-            logger.error(error_msg, exc_info=True)
-            pass
+                except Exception as e:
+                    error_details = str(e)
+                    if hasattr(e, 'message') and e.message: error_details = e.message
+                    elif hasattr(e, 'details') and callable(e.details) and e.details(): error_details = e.details()
+                    error_msg = f"{ERROR_PREFIX} 💥 Unexpected Error during Gemini Generation ({type(e).__name__}): {error_details}. Please check your inputs and network connection. Retrying..."
+                    logger.error(error_msg, exc_info=True)
+                    pass
 
-        current_retry += 1
-        if current_retry <= max_retries:
-            logger.info(f"⏳ Waiting {retry_delay_seconds} seconds before retry {current_retry}/{max_retries}...")
-            import time
-            time.sleep(retry_delay_seconds)
-
-    final_error_msg = f"{ERROR_PREFIX} 🔴 All {max_retries} retries failed. Please check your API key, network, and the ComfyUI console for detailed errors."
-    logger.error(final_error_msg)
-    return final_error_msg, final_error_msg, prompt_tokens, response_tokens, thoughts_tokens
+                current_retry += 1
+                if current_retry <= max_retries:
+                    delay = retry_delay_seconds * (2 ** (current_retry - 1)) # Exponential backoff
+                    logger.info(f"⏳ Waiting {delay} seconds before retry {current_retry}/{max_retries}...")
+                    import time
+                    time.sleep(delay)
+            # If loop finishes without returning, it means all retries failed
+            final_error_msg = f"{ERROR_PREFIX} 🔴 All {max_retries} retries failed. Please check your API key, network, and the ComfyUI console for detailed errors."
+            logger.error(final_error_msg)
+            return final_error_msg, final_error_msg, prompt_tokens, response_tokens, thoughts_tokens
+    except Exception as e: # Catch errors during client initialization
+        final_error_msg = f"{ERROR_PREFIX} ❌ Failed to initialize Gemini Client: {e}"
+        logger.error(final_error_msg, exc_info=True)
+        return final_error_msg, final_error_msg, prompt_tokens, response_tokens, thoughts_tokens
 
 
 # This function is now designed to be called at node initialization (INPUT_TYPES)
