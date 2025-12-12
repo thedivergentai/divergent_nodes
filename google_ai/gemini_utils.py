@@ -2,7 +2,7 @@
 Utility functions and constants for the Google Gemini API node.
 Includes functions for API key configuration, content preparation,
 generation with advanced options, and model listing.
-Uses the recommended google-genai library and follows GitHub README examples.
+Uses the recommended google-genai library (v0.1+) patterns.
 """
 import os
 import logging
@@ -13,7 +13,8 @@ from PIL import Image
 import torch
 from google import genai
 from google.genai import types
-from google.api_core import exceptions as google_exceptions
+from google.genai import errors as genai_errors
+
 # Import the new config manager
 from ..shared_utils.config_manager import load_config
 from ..shared_utils.image_conversion import tensor_to_pil # Assuming this utility is stable
@@ -21,11 +22,6 @@ from ..shared_utils.logging_utils import SUCCESS_HIGHLIGHT # Import SUCCESS_HIGH
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
-
-# Suppress verbose HTTP request logging from google-api-core and its sub-loggers
-# Setting the top-level 'google.api_core' logger to ERROR will silence most verbose HTTP/RPC logs.
-logging.getLogger('google.api_core').setLevel(logging.ERROR)
-
 
 # --- Type Aliases ---
 PilImageT: TypeAlias = Image.Image
@@ -36,18 +32,12 @@ PilImageT: TypeAlias = Image.Image
 # as a default. New models can be added, but existing ones should not be removed unless
 # explicitly instructed by the user.
 DEFAULT_MODELS: List[str] = [
-    "models/gemini-2.5-flash-preview-04-17",
-    "models/gemini-2.5-pro-preview-05-06",
-    "models/gemini-2.0-flash",
-    "models/gemini-2.0-flash-preview-image-generation",
-    "models/gemini-2.0-flash-lite",
-    "models/gemini-1.5-flash",
-    "models/gemini-1.5-flash-8b",
-    "models/gemini-1.5-pro",
-    "models/gemini-embedding-exp",
-    "models/imagen-3.0-generate-002",
-    "models/veo-2.0-generate-001",
-    "models/gemini-2.0-flash-live-001",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite-preview-02-05",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
+    "imagen-3.0-generate-002",
 ]
 
 SAFETY_SETTINGS_MAP: Dict[str, str] = {
@@ -329,8 +319,8 @@ def generate_content(
                         logger.warning(status_msg)
                         raise RuntimeError(status_msg)
 
-                except google_exceptions.GoogleAPIError as e:
-                    error_msg = f"{ERROR_PREFIX} ❌ Google API Error ({getattr(e, 'code', 'N/A')}): {e.message}. This could be an invalid API key, rate limit, or service issue. Retrying..."
+                except genai_errors.ClientError as e:
+                    error_msg = f"{ERROR_PREFIX} ❌ Google GenAI API Error: {e}. This could be an invalid API key, rate limit, or service issue. Retrying..."
                     logger.error(error_msg, exc_info=True)
                     pass
 
@@ -372,24 +362,25 @@ def get_available_models_robust(api_key: Optional[str]) -> List[str]:
         return DEFAULT_MODELS
 
     try:
-        genai.configure(api_key=api_key, transport='rest', http_options={'api_version': 'v1alpha'})
-        logger.debug("✅ Gemini API configured for model listing.")
+        # Use Client instead of configure
+        with genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'}) as client:
+            logger.debug("✅ Gemini Client initialized for model listing.")
 
-        model_list: List[str] = [
-            m.name for m in genai.list_models()
-            if 'generateContent' in m.supported_actions
-        ]
-        
-        if not model_list:
-            logger.warning("⚠️ No models supporting 'generateContent' were found via the API. Falling back to default model list. This might indicate an API issue or restricted access.")
-            return DEFAULT_MODELS
-        
-        model_list.sort(key=lambda x: ('latest' not in x, x))
-        logger.info(f"✅ Successfully fetched {len(model_list)} models from Gemini API.")
-        return model_list
+            model_list: List[str] = [
+                m.name for m in client.models.list()
+                if 'generateContent' in m.supported_actions
+            ]
+            
+            if not model_list:
+                logger.warning("⚠️ No models supporting 'generateContent' were found via the API. Falling back to default model list. This might indicate an API issue or restricted access.")
+                return DEFAULT_MODELS
+            
+            model_list.sort(key=lambda x: ('latest' not in x, x))
+            logger.info(f"✅ Successfully fetched {len(model_list)} models from Gemini API.")
+            return model_list
     
-    except google_exceptions.GoogleAPIError as e:
-        error_msg = f"❌ API Error fetching Gemini models ({getattr(e, 'code', 'N/A')}): {e.message}. Please check your API key and network connection."
+    except genai_errors.ClientError as e:
+        error_msg = f"❌ API Error fetching Gemini models: {e}. Please check your API key and network connection."
         logger.error(error_msg, exc_info=True)
         logger.warning("⚠️ Failed to fetch models from Gemini API due to an API error. Using default model list.")
         return DEFAULT_MODELS

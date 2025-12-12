@@ -3,3 +3,9 @@ __pycache__/
 venv/
 config.json
 .pytest_cache/
+
+# Docker testing environment (local only)
+docker/
+
+# Test scripts
+test_*.py
