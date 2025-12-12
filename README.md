@@ -1,79 +1,75 @@
-# Divergent Nodes - Custom ComfyUI Nodes
+# Divergent Nodes // Custom ComfyUI Suite
 
-This repository contains a collection of custom nodes for ComfyUI designed to integrate external AI models, provide utilities, and enable advanced workflows.
+Welcome to the Divergent Nodes collection. This isn't just another node pack; it's a curated set of tools designed to bridge the gap between "it works" and "it works beautifully." We focus on meaningful integrations, better utilities, and making your terminal output look as good as your generations.
 
-## Installation
+## Let's Get You Set Up
 
-1.  **Clone Repository:**
-    Navigate to your `ComfyUI/custom_nodes/` directory and clone this repository:
-    ```bash
-    cd ComfyUI/custom_nodes/
-    git clone https://github.com/thedivergentai/divergent_nodes.git divergent_nodes
+### 1. Installation
+Navigate to your `ComfyUI/custom_nodes/` directory and bring the repository home:
+```bash
+cd ComfyUI/custom_nodes/
+git clone https://github.com/thedivergentai/divergent_nodes.git divergent_nodes
+```
+*(Already have it? Just run `git pull` inside the folder to get the latest tools.)*
+
+### 2. Dependencies
+We try to keep it light, but we need a few things to run.
+```bash
+cd divergent_nodes
+pip install -r requirements.txt
+```
+
+### 3. Configuration (Gemini Node)
+To use the Gemini node, you'll need a Google AI Studio API key.
+*   **The Right Way:** Create a `config.json` file in this directory:
+    ```json
+    {
+      "GOOGLE_API_KEY": "YOUR_API_KEY_HERE"
+    }
     ```
-    *(Note: If you cloned previously, you can update with `git pull` inside the `divergent_nodes` directory)*
+*   **The Other Way:** We also support `.env` files if that's your preferred workflow.
 
-2.  **Install Dependencies:**
-    Install the required Python packages:
-    ```bash
-    cd divergent_nodes
-    pip install -r requirements.txt
-    ```
-
-3.  **Set up API Key (for Gemini Node):**
-    *   **Recommended:** Create or update `config.json` in the `divergent_nodes` directory (this directory) with your Google AI Studio API key:
-        ```json
-        {
-          "GOOGLE_API_KEY": "YOUR_API_KEY_HERE"
-        }
-        ```
-    *   **Alternatively (less preferred):** Create a file named `.env` in the `divergent_nodes` directory (this directory).
-    *   Add your Google AI Studio API key to the `.env` file in the following format:
-        ```
-        GOOGLE_API_KEY=YOUR_API_KEY_HERE
-        ```
-    *   Refer to the `example_config.json` or `.env.example` file for guidance.
-    *   The `config.json` and `.env` files are included in `.gitignore` and will not be tracked by Git.
-
-4.  **Restart ComfyUI:**
-    Ensure you fully restart the ComfyUI server after installation/updates.
-
-The nodes should now appear in the ComfyUI node menu under their respective categories.
-
-## Enhanced Logging
-
-Divergent Nodes features enhanced logging in your ComfyUI console for better readability and a more enjoyable experience.
-
-*   **Clear Identification:** All log messages from Divergent Nodes are prefixed with `[👽 NodeName]` (e.g., `[👽 GeminiNode]`) to easily identify their source.
-*   **Visual Cues:** Log messages are colored and include emojis to quickly convey their status:
-    *   **INFO:** ✅ Green - For successful operations and general information.
-    *   **WARNING:** ⚠️ Yellow - For non-critical issues or important notices.
-    *   **ERROR:** ❌ Red - For failures and critical problems.
-    *   **DEBUG:** 🐛 Cyan - For detailed debugging information (usually hidden).
-    *   **SPECIAL SUCCESS:** 🎉✨ Bold Bright Magenta - For major milestones like successful image generation or model downloads.
-
-For a detailed key of all log messages and their meanings, please refer to the [Divergent Nodes Wiki Logging section](divergent_nodes.wiki/Logging.md).
-
-## Included Nodes
-
-This pack currently includes the following nodes:
-
-*   **CLIP Token Counter** (`Divergent AI 👽/Text Utils`): Counts tokens for given text using a selected CLIP tokenizer.
-*   **Divergent Gemini Node** (`Divergent AI 👽/Gemini`): Generates text (optionally using image input) via the Google Gemini API. Requires API key. Supports extended thinking and thinking token budget.
-*   **KoboldCpp API Connector (Basic)** (`Divergent AI 👽/KoboldCpp`): Connects to an *already running* KoboldCpp instance for text generation.
-*   **LoRA Strength XY Plot** (`Divergent AI 👽/XY Plots`): Generates an image grid comparing different LoRAs (X-axis) against varying model strengths (Y-axis).
-*   **MusiQ Image Scorer** (`Divergent AI 👽/MusiQ`): Scores images based on aesthetic and technical quality using Google's MusiQ models.
-*   **Save Image Enhanced (DN)** (`Divergent AI 👽/Image`): Saves images with enhanced options including custom output folder, filename prefixing, and optional caption saving.
+Don't worry, both files are git-ignored by default. Your secrets stay secret.
 
 ---
 
-## Example Workflows
+## The Divergent Experience
 
-Example workflows demonstrating node usage can be found in the [Divergent Nodes Wiki Examples section](divergent_nodes.wiki/Examples.md).
+### Enhanced Logging
+Reading logs shouldn't feel like decoding the Matrix. We've overhauled the console output to be clean, colorful, and actually useful.
+*   **Clear Context:** Every log is prefixed (e.g., `[👽 Gemini]`) so you know exactly who's talking.
+*   **Visual Status:**
+    *   ✅ **Green**: All systems go.
+    *   ⚠️ **Yellow**: Heads up, check this.
+    *   ❌ **Red**: Something broke.
+    *   🎉 **Magenta**: Magic just happened (like a successful generation).
 
-## Contributing
+### The Toolbox
+Here is what's currently inside the suite:
 
-Contribution guidelines can be found in the [Divergent Nodes Wiki Contributing section](divergent_nodes.wiki/Contributing.md).
+*   **Divergent Gemini** (`Divergent AI 👽/Gemini`)
+    Direct access to Google's Gemini models. Supports vision input and "thinking" budgets for complex logic. It’s an LLM that actually listens.
 
-## License
+*   **MusiQ Image Scorer** (`Divergent AI 👽/MusiQ`)
+    Stop guessing if your generation is "good." This node uses Google's MusiQ models to objectively score aesthetic and technical quality.
 
-License information for Divergent Nodes can be found in the project's GitHub repository.
+*   **KoboldCpp Connector** (`Divergent AI 👽/KoboldCpp`)
+    Connect to your local LLM stack running on KoboldCpp. simple, fast, local.
+
+*   **LoRA Strength XY Plot** (`Divergent AI 👽/XY Plots`)
+    Visual data is better data. Generate grids comparing different LoRAs against varying strengths to find that sweet spot instantly.
+
+*   **CLIP Token Counter** (`Divergent AI 👽/Text Utils`)
+    A simple utility to keep your prompt lengths in check. Know exactly what the model sees.
+
+*   **Save Image Enhanced** (`Divergent AI 👽/Image`)
+    A better save node. Custom folders, smart naming, and optional caption saving. Because file management matters.
+
+---
+
+## Going Deeper
+Need examples or want to see the code?
+*   **Wiki:** [Check the docs](divergent_nodes.wiki/Examples.md) for workflows and deep dives.
+*   **Contribute:** Found a bug? Have an idea? [Read our guidelines](divergent_nodes.wiki/Contributing.md).
+
+*Build something different.*
